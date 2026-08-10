@@ -6,12 +6,31 @@
 <style>
   :root { color-scheme: dark; }
   body {
-    font-family: system-ui, sans-serif; max-width: 480px; margin: 2rem auto; padding: 0 1rem;
-    background: #0b0d12; color: #e8e8ea; text-align: center;
+    font-family: system-ui, sans-serif; max-width: 1280px; margin: 1.5rem auto; padding: 0 1.25rem;
+    background: #0b0d12; color: #e8e8ea;
   }
-  h1 { font-size: 1.1rem; font-weight: 500; color: #9a9aa5; }
+  h1 { font-size: 1.1rem; font-weight: 500; color: #9a9aa5; text-align: center; margin-bottom: 1.25rem; }
 
-  #orb-wrap { display: flex; justify-content: center; margin: 2.5rem 0 1.5rem; }
+  /* Tres columnas: parámetros | llamada | resultado. La del centro es la
+     estrecha porque el orbe y los botones no necesitan ancho; los paneles de
+     los lados sí, que es donde se lee. En pantallas angostas caen en una sola
+     columna en el mismo orden. */
+  #layout {
+    display: grid; grid-template-columns: minmax(240px, 1fr) minmax(220px, 0.8fr) minmax(280px, 1.3fr);
+    gap: 1.25rem; align-items: start;
+  }
+  @media (max-width: 900px) { #layout { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: #14161c; border: 1px solid #1f232d; border-radius: 10px; padding: 1rem;
+  }
+  .panel > h2 {
+    font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.07em;
+    color: #7d7d88; margin: 0 0 0.9rem; font-weight: 600;
+  }
+  #col-centro { text-align: center; }
+
+  #orb-wrap { display: flex; justify-content: center; margin: 0.5rem 0 1.25rem; }
   #orb {
     width: 140px; height: 140px; border-radius: 50%;
     background: radial-gradient(circle at 35% 30%, #4c6fff, #1b2a6b);
@@ -32,22 +51,93 @@
     background: #4c6fff; color: white; margin-top: 0.5rem;
   }
   #startBtn:disabled { background: #333; color: #888; cursor: default; }
-  #transcript {
-    margin-top: 1.5rem; text-align: left; white-space: pre-wrap;
-    background: #14161c; border-radius: 8px; padding: 1rem; min-height: 160px;
-    font-size: 0.88rem; line-height: 1.5; color: #c9c9d2;
+  #hangupBtn {
+    font-size: 1rem; padding: 0.7rem 1.4rem; cursor: pointer; border: none; border-radius: 999px;
+    background: #c0392b; color: white; margin-top: 0.5rem; display: none;
   }
+  #noticeBox {
+    display: none; margin-top: 1rem; padding: 0.75rem 1rem; border-radius: 8px;
+    background: #3a3014; color: #ffd89d; font-size: 0.85rem; text-align: left;
+  }
+  #transcript {
+    white-space: pre-wrap; max-height: 300px; overflow-y: auto;
+    background: #0b0d12; border: 1px solid #1f232d; border-radius: 6px; padding: 0.75rem;
+    font-size: 0.82rem; line-height: 1.5; color: #c9c9d2;
+  }
+  #transcript:empty::before { content: 'La transcripción aparece aquí durante la llamada.'; color: #5a5a63; }
+
+  #setup label { display: block; font-size: 0.75rem; text-transform: uppercase;
+    letter-spacing: 0.05em; color: #7d7d88; margin-bottom: 0.3rem; }
+  #setup select, #setup input {
+    width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid #2a2d38;
+    background: #0b0d12; color: #e8e8ea; font-size: 0.9rem; font-family: inherit;
+    box-sizing: border-box;
+  }
+  #setup select:disabled, #setup input:disabled { color: #6b6b75; }
+  #setup input::placeholder { color: #5a5a63; }
+  .row + .row { margin-top: 0.8rem; }
+  #ficha { margin-top: 0.8rem; font-size: 0.82rem; color: #9a9aa5; line-height: 1.5; }
+  #ficha b { color: #c9c9d2; font-weight: 500; }
+
+  #resumen {
+    font-size: 0.83rem; line-height: 1.55; color: #c9c9d2; margin-bottom: 1.1rem;
+  }
+  #resumen:empty::before {
+    content: 'Al colgar aparece acá el resumen: decisión, síntomas, referencias y próximos pasos.';
+    color: #5a5a63;
+  }
+  #resumen dt { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em;
+    color: #7d7d88; margin-top: 0.8rem; }
+  #resumen dd { margin: 0.15rem 0 0; }
+  #resumen ul { margin: 0.15rem 0 0; padding-left: 1.1rem; }
+  #resumen li { margin-bottom: 0.2rem; }
+  .nivel { display: inline-block; padding: 0.15rem 0.6rem; border-radius: 999px;
+    font-weight: 600; font-size: 0.8rem; }
+  .nivel-verde    { background: #14351f; color: #7ee2a8; }
+  .nivel-amarillo { background: #3a3014; color: #ffd89d; }
+  .nivel-rojo     { background: #3a1414; color: #ff9d9d; }
+  .nivel-ninguno  { background: #3a1414; color: #ff9d9d; }
 </style>
 </head>
 <body>
   <h1>Seguimiento postoperatorio — llamada</h1>
 
-  <div id="orb-wrap"><div id="orb"></div></div>
-  <div id="state">Inactivo</div>
-  <button id="startBtn">Iniciar llamada</button>
+  <div id="layout">
 
-  <div id="errorBox"></div>
-  <div id="transcript"></div>
+    <div class="panel" id="setup">
+      <h2>Parámetros de la llamada</h2>
+      <div class="row">
+        <label for="nombreInput">Nombre del paciente</label>
+        <input id="nombreInput" type="text" placeholder="Ej: María Restrepo" autocomplete="off">
+      </div>
+      <div class="row">
+        <label for="procSel">Cirugía</label>
+        <select id="procSel"><option value="">Cargando...</option></select>
+      </div>
+      <div class="row">
+        <label for="diaSel">Día del postoperatorio</label>
+        <select id="diaSel"></select>
+      </div>
+      <div id="ficha"></div>
+    </div>
+
+    <div class="panel" id="col-centro">
+      <h2>Llamada</h2>
+      <div id="orb-wrap"><div id="orb"></div></div>
+      <div id="state">Inactivo</div>
+      <button id="startBtn">Iniciar llamada</button>
+      <button id="hangupBtn">Colgar</button>
+      <div id="noticeBox"></div>
+      <div id="errorBox"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Resultado</h2>
+      <div id="resumen"></div>
+      <div id="transcript"></div>
+    </div>
+
+  </div>
 
 <script>
 const orb = document.getElementById('orb');
@@ -56,9 +146,77 @@ const stateEl = document.getElementById('state');
 const errorBox = document.getElementById('errorBox');
 const transcriptEl = document.getElementById('transcript');
 
+const hangupBtn = document.getElementById('hangupBtn');
+const noticeBox = document.getElementById('noticeBox');
+const nombreInput = document.getElementById('nombreInput');
+const procSel = document.getElementById('procSel');
+const diaSel = document.getElementById('diaSel');
+const fichaEl = document.getElementById('ficha');
+
 let ws, micCtx, micStream, processor, analyser;
 let playCtx, nextPlayTime = 0;
 let animationFrame;
+
+// Se manda lo que HAYA. Antes esto exigía nombre Y cirugía, y si faltaba una
+// se descartaban las dos: escribir el nombre y dejar la cirugía sin escoger
+// tiraba el nombre a la basura y la llamada salía totalmente genérica.
+function datosLlamada() {
+  return {
+    nombre: nombreInput.value.trim(),
+    procedimiento: procSel.value,
+    dia: diaSel.value,
+  };
+}
+
+function renderFicha() {
+  const d = datosLlamada();
+  const proc = d.procedimiento ? procSel.options[procSel.selectedIndex].textContent : '';
+  if (d.nombre && proc) {
+    fichaEl.textContent = `${d.nombre} · ${proc} · día ${d.dia} del postoperatorio.`;
+  } else if (d.nombre) {
+    fichaEl.textContent = `${d.nombre}. Sin cirugía indicada: el agente la preguntará ` +
+      `y buscará en todo el corpus, no solo en el de su patología.`;
+  } else if (proc) {
+    fichaEl.textContent = `${proc}, día ${d.dia}. Sin nombre: el agente preguntará con quién habla.`;
+  } else {
+    fichaEl.textContent = 'Llamada genérica: el agente tendrá que preguntar el nombre ' +
+      'y de qué lo operaron antes de poder evaluar nada.';
+  }
+}
+
+async function cargarOpciones() {
+  let data = { procedures: [], dias_postop: [] };
+  try {
+    data = await (await fetch('/api/procedures')).json();
+  } catch { /* servidor caído: se deja el modo genérico */ }
+
+  procSel.innerHTML = '';
+  const generico = document.createElement('option');
+  generico.value = '';
+  generico.textContent = 'Sin especificar (llamada genérica)';
+  procSel.appendChild(generico);
+  for (const p of data.procedures || []) {
+    const opt = document.createElement('option');
+    opt.value = p.key;
+    opt.textContent = p.label;
+    procSel.appendChild(opt);
+  }
+
+  diaSel.innerHTML = '';
+  for (const d of data.dias_postop || []) {
+    const opt = document.createElement('option');
+    opt.value = d;
+    opt.textContent = `Día ${d}`;
+    diaSel.appendChild(opt);
+  }
+
+  renderFicha();
+}
+
+nombreInput.oninput = renderFicha;
+procSel.onchange = renderFicha;
+diaSel.onchange = renderFicha;
+cargarOpciones();
 
 function showError(msg) {
   errorBox.style.display = 'block';
@@ -69,6 +227,86 @@ function showError(msg) {
 
 function setSpeaking(isSpeaking) {
   orb.classList.toggle('speaking', isSpeaking);
+}
+
+function showNotice(msg, seconds) {
+  noticeBox.style.display = 'block';
+  noticeBox.textContent = msg;
+  if (seconds) setTimeout(() => { noticeBox.style.display = 'none'; }, seconds * 1000);
+}
+
+const resumenEl = document.getElementById('resumen');
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s == null ? '' : String(s);
+  return d.innerHTML;
+}
+
+function renderResumen(s) {
+  const nivel = s.nivel_final || '';
+  const clase = nivel ? `nivel-${nivel}` : 'nivel-ninguno';
+  const etiqueta = nivel ? nivel.toUpperCase() : 'SIN DECISIÓN REGISTRADA';
+
+  // Se deduplican los documentos: el agente suele consultar varias veces y
+  // traer el mismo PDF, y la lista importa como trazabilidad, no como conteo.
+  const docs = [...new Set((s.referencias || []).map(r => r.documento))];
+
+  let html = `<dl>`;
+  html += `<dt>Paciente</dt><dd>${esc(s.paciente)}</dd>`;
+  html += `<dt>Procedimiento</dt><dd>${esc(s.procedimiento)}`;
+  if (s.dia_postop) html += ` · día ${esc(s.dia_postop)} del postoperatorio`;
+  html += `</dd>`;
+  html += `<dt>Decisión</dt><dd><span class="nivel ${clase}">${esc(etiqueta)}</span>`;
+  if (s.motivo) html += `<br>${esc(s.motivo)}`;
+  if (s.nivel_llm && s.nivel_llm !== nivel) {
+    html += `<br><i>El modelo propuso "${esc(s.nivel_llm)}"; un disparador de seguridad lo elevó.</i>`;
+  }
+  html += `</dd>`;
+  html += `<dt>Próximos pasos</dt><dd>${esc(s.proximos_pasos)}</dd>`;
+
+  html += `<dt>Reportado por el paciente (${(s.sintomas || []).length})</dt><dd>`;
+  html += (s.sintomas || []).length
+    ? `<ul>${s.sintomas.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`
+    : 'Nada registrado.';
+  html += `</dd>`;
+
+  html += `<dt>Referencias clínicas consultadas (${docs.length})</dt><dd>`;
+  html += docs.length
+    ? `<ul>${docs.map(d => `<li>${esc(d)}</li>`).join('')}</ul>`
+    : 'El agente no consultó la base de conocimiento.';
+  html += `</dd>`;
+
+  html += `<dt>Sesión</dt><dd>${esc(s.duration_s)} s · ${esc(s.turnos)} turnos · ` +
+          `${esc(s.rag_queries)} consultas al RAG · modelo ${esc(s.modelo)}</dd>`;
+  html += `</dl>`;
+
+  resumenEl.innerHTML = html;
+}
+
+function hangup() {
+  // Cortar el mic ANTES de tocar el WS: si no, onaudioprocess sigue disparando
+  // contra un socket que se está cerrando y llena la consola de excepciones.
+  if (processor) { processor.disconnect(); processor.onaudioprocess = null; }
+  if (micStream) micStream.getTracks().forEach(t => t.stop());
+  if (micCtx && micCtx.state !== 'closed') micCtx.close();
+  micCtx = null; processor = null; analyser = null;
+
+  hangupBtn.disabled = true;
+  stateEl.textContent = 'Cerrando llamada y generando resumen...';
+
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    // Avisar en vez de cerrar: el backend necesita el socket abierto para
+    // mandar el resumen de la llamada. Cierra él cuando termina.
+    ws.send(JSON.stringify({ type: 'Hangup' }));
+    // Red de seguridad: si el backend no cierra (caído, colgado), no dejar la
+    // interfaz atrapada en "cerrando" para siempre.
+    setTimeout(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) ws.close(1000, 'timeout de colgado');
+    }, 5000);
+  } else if (ws) {
+    ws.close(1000, 'colgado por el usuario');
+  }
 }
 
 function pulseFromLevel(level) {
@@ -119,9 +357,13 @@ function playPcm16Chunk(buf) {
 }
 
 let sentChunks = 0;
+let ultimoAudioReal = 0;
+let reporteMic = null;
 
 async function startCall() {
   errorBox.style.display = 'none';
+  resumenEl.innerHTML = '';
+  transcriptEl.textContent = '';
   orb.classList.remove('error');
   startBtn.disabled = true;
   sentChunks = 0;
@@ -177,18 +419,49 @@ async function startCall() {
   processor.onaudioprocess = (e) => {
     const input = downsampleTo16k(e.inputBuffer.getChannelData(0), nativeSampleRate);
     const pcm16 = new Int16Array(input.length);
+    let suma = 0;
     for (let i = 0; i < input.length; i++) {
       pcm16[i] = Math.max(-32768, Math.min(32767, input[i] * 32768));
+      suma += input[i] * input[i];
     }
+
+    // Nivel REAL de lo que se envía, medido sobre el PCM ya convertido — no
+    // sobre el analyser. Hubo una llamada que mandó 900 fragmentos a Deepgram
+    // sin que transcribiera una sola palabra y sin un solo error: desde el
+    // servidor era imposible saber si el micrófono estaba mudo o si Deepgram
+    // no reconocía la voz. Esto lo distingue.
+    const rms = Math.sqrt(suma / input.length);
+    if (rms > 0.008) ultimoAudioReal = Date.now();
+
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(pcm16.buffer);
       sentChunks++;
-      stateEl.textContent = `En llamada (mic nativo ${nativeSampleRate}Hz → 16kHz) — enviados ${sentChunks} fragmentos`;
+      const mudo = Date.now() - ultimoAudioReal;
+      if (mudo > 6000) {
+        stateEl.textContent = `⚠ No se detecta voz en el micrófono (${Math.round(mudo / 1000)}s en silencio)`;
+      } else {
+        stateEl.textContent =
+          `En llamada · mic ${nativeSampleRate}Hz→16kHz · ${sentChunks} fragmentos · nivel ${rms.toFixed(3)}`;
+      }
     }
   };
 
   stateEl.textContent = 'Conectando con el agente...';
-  ws = new WebSocket(`ws://${location.host}/ws/call`);
+  // El paciente va en el query string y no en un mensaje posterior: el backend
+  // arma el Settings de Deepgram (prompt con la ficha) en el mismo momento en
+  // que abre la sesión, antes de que exista cualquier turno de conversación.
+  const d = datosLlamada();
+  const qs = new URLSearchParams();
+  if (d.nombre) qs.set('nombre', d.nombre);
+  if (d.procedimiento) {
+    qs.set('procedimiento', d.procedimiento);
+    if (d.dia) qs.set('dia', d.dia);
+  }
+  const query = qs.toString() ? `?${qs}` : '';
+  nombreInput.disabled = true;
+  procSel.disabled = true;
+  diaSel.disabled = true;
+  ws = new WebSocket(`ws://${location.host}/ws/call${query}`);
   ws.binaryType = 'arraybuffer';
 
   ws.onerror = () => {
@@ -197,6 +470,21 @@ async function startCall() {
 
   ws.onopen = () => {
     stateEl.textContent = 'En llamada — habla cuando quieras';
+    hangupBtn.style.display = 'inline-block';
+    ultimoAudioReal = Date.now();
+
+    // Reporte periódico del micrófono al backend, para que quede EN LOS LOGS.
+    // Sin esto, un "no transcribió nada" solo se puede diagnosticar si el
+    // usuario está mirando la pantalla en ese momento.
+    clearInterval(reporteMic);
+    reporteMic = setInterval(() => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(JSON.stringify({
+        type: 'MicStatus',
+        chunks: sentChunks,
+        silencio_s: Math.round((Date.now() - ultimoAudioReal) / 1000),
+      }));
+    }, 5000);
   };
 
   ws.onmessage = (event) => {
@@ -206,6 +494,18 @@ async function startCall() {
         if (msg.type === 'ConversationText') {
           transcriptEl.textContent += `${msg.role}: ${msg.content}\n`;
           transcriptEl.scrollTop = transcriptEl.scrollHeight;
+        } else if (msg.type === 'CallSummary') {
+          renderResumen(msg.summary);
+        } else if (msg.type === 'ProviderSwitch') {
+          // La llamada NO se cae: se agotó la cuota de un proveedor y sigue
+          // con el otro. Se avisa porque cambia el modelo que razona.
+          showNotice(msg.description, 8);
+          stateEl.textContent = `En llamada — ahora con ${msg.model}`;
+        } else if (msg.type === 'AgentPaused') {
+          // El backend avisa que está esperando por el rate limit de Groq —
+          // sin esto el agente se queda mudo y no hay forma de saber por qué.
+          showNotice(msg.description, msg.seconds);
+          stateEl.textContent = 'Pausa — límite de Groq, reanudando...';
         } else if (msg.type === 'Error') {
           showError(`Deepgram: ${msg.description || JSON.stringify(msg)}`);
         }
@@ -217,16 +517,23 @@ async function startCall() {
 
   ws.onclose = () => {
     stateEl.textContent = 'Llamada finalizada';
+    clearInterval(reporteMic);
     cancelAnimationFrame(animationFrame);
     orb.style.transform = 'scale(1)';
     orb.style.boxShadow = 'none';
     setSpeaking(false);
     startBtn.disabled = false;
+    hangupBtn.style.display = 'none';
+    hangupBtn.disabled = false;
+    nombreInput.disabled = false;
+    procSel.disabled = false;
+    diaSel.disabled = false;
     if (micStream) micStream.getTracks().forEach(t => t.stop());
   };
 }
 
 startBtn.onclick = startCall;
+hangupBtn.onclick = hangup;
 </script>
 </body>
 </html>
