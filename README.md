@@ -7,10 +7,23 @@ base de conocimiento clínico (RAG) y decide nivel de escalamiento
 
 ## Modelo declarado (G3)
 
-**Llama 3.1 70B vía Groq** — cloud, latencia ultra-baja. Servido como
-`llama-3.3-70b-versatile` (Groq descontinuó el ID original en ene 2025; es su
-reemplazo directo). Ver justificación completa y nota sobre próxima baja de
-este modelo en `docs/architecture.md`.
+**Meta Llama vía Groq**, servido como `llama-3.3-70b-versatile`. La lista de G3
+fija *familias*, no versiones: Groq descontinuó `llama-3.1-70b-versatile` en
+ene 2025 y este es su sucesor vigente en el mismo proveedor.
+
+El agente soporta además **Google Gemini gama Flash**, la otra familia de nube
+permitida, con `THINK_PROVIDER=google` en `.env`. Se implementó para poder
+comparar las dos con datos propios:
+
+| | Groq / Llama 70B | Gemini Flash |
+|---|---|---|
+| Latencia | Menor (LPU) | Mayor |
+| Techo de tokens | 12 000 TPM (medido) | Mucho más alto |
+| Corta llamadas largas | Sí, verificado en logs | No observado |
+
+Groq gana en latencia, que puntúa en *Calidad de la conversación (voz)*; Gemini
+aguanta conversaciones largas sin cortarse. Cambiar entre ambos es una variable
+de entorno, sin tocar código.
 
 ## Stack
 
@@ -66,6 +79,31 @@ Luego:
 - Consola admin: http://localhost:8000/admin
 - Interfaz de llamada: http://localhost:8000/call
 
+## Contexto del paciente
+
+La interfaz de llamada pide tres datos antes de marcar: **nombre** (texto
+libre), **cirugía** (las 5 del corpus) y **día del postoperatorio**. Las
+opciones salen de `GET /api/procedures`.
+
+Sin esto el agente llama a ciegas y no puede juzgar nada: un dolor en el pie
+es irrelevante tras una apendicectomía y es justo lo que hay que vigilar tras
+un reemplazo de rodilla; fiebre de 37.6 el día 1 es esperable y el día 14 es
+alarma. Con el contexto puesto:
+
+- El agente arranca sabiendo a quién llama, de qué lo operaron y en qué día va
+  (`app/patients.py`), y lo dice en el saludo.
+- `consultar_guia_clinica` acota la búsqueda al corpus de esa patología
+  (metadata `category`), en vez de mezclar las 5 del dataset.
+
+Dejando nombre o cirugía en blanco la llamada sigue siendo genérica y el
+agente los pregunta él mismo — es el modo con el que se demostró el pipeline
+antes de existir el formulario.
+
+Los perfiles de paciente del dataset (`perfiles_*.xlsx`, 40 pacientes con
+comorbilidades y trayectorias) **no** los usa la app: se probó un selector
+poblado desde ahí y se descartó porque para demostrar importa poder inventar
+el caso en el momento. Siguen disponibles para evaluación offline.
+
 ## Métricas obligatorias
 
 Ver `GET /api/metrics/summary` tras una sesión de llamadas de prueba, y la
@@ -73,11 +111,49 @@ plantilla llenada en `docs/final-report.md`.
 
 | Métrica | Cómo se mide |
 |---|---|
-| Latencia P50/P95 (fin de habla -> inicio audio) | `app/metrics.py::summary()` |
-| Tokens input/output por turno | idem |
-| Invocaciones de modelo por turno | idem |
+| Latencia P50/P95 (fin de habla -> inicio audio) | `app/metrics.py::summary()` — medición real |
+| Tokens input/output por turno | `app/tokens.py` — **estimación**, ver nota abajo |
+| Invocaciones de modelo por turno | `app/metrics.py::summary()` — medición real |
 | RAG queries por llamada | idem |
-| Costo estimado por llamada | calculado a mano desde pricing público Groq/Deepgram — ver `docs/final-report.md` |
+| Costo estimado por llamada | tokens estimados × pricing público — ver `docs/final-report.md` |
+
+### Nota sobre los tokens: son estimados, no medidos
+
+En esta arquitectura el backend **nunca ve el `usage` real**. Deepgram habla
+directo con Groq/Gemini en modo BYOM y solo reenvía eventos de conversación; el
+`usage` se queda entre Deepgram y el proveedor. Interceptarlo con un proxy
+propio en `endpoint.url` exigiría exponer esta máquina a Internet con un túnel
+público solo para medir.
+
+Lo que se hace: reconstruir el prompt que Deepgram arma en cada turno (prompt de
+sistema + schema de tools + historial completo + resultados de tools) y contarlo
+localmente a ~3.7 caracteres por token. `GET /api/metrics/summary` devuelve
+`tokens_son_estimados: true` para que quede explícito.
+
+**Cómo se verifica:** cuando Groq responde 429 incluye el conteo real de esa
+petición (`"Used 10271, Requested 3735"`). Cada vez que ocurre, el sistema
+compara contra su propia estimación del mismo instante y registra el error en el
+log (`app/tokens.py::calibrate`). El número reportado tiene contraste contra el
+proveedor, no es una cifra suelta.
+
+## Resumen de llamada
+
+Al colgar, el sistema genera y persiste un resumen estructurado con: paciente y
+procedimiento, día postoperatorio, síntomas reportados textualmente, decisión de
+escalamiento (con el nivel que propuso el modelo si un disparador de seguridad
+lo elevó), documentos del corpus que sustentaron las respuestas, próximos pasos
+y la transcripción completa.
+
+- Se muestra en pantalla al colgar, sin salir de la interfaz de llamada.
+- Se persiste en SQLite y se consulta en `GET /api/calls` y `GET /api/calls/{id}`.
+- `GET /api/calls` incluye `sin_decision`: cuántas llamadas terminaron sin
+  ningún nivel de riesgo registrado. Una llamada sin decisión no es un "verde
+  por defecto", es un fallo del sistema, y se marca como tal.
+
+El resumen es un registro estructurado, no un párrafo generado por el LLM: así
+las referencias clínicas son verificables contra la fuente real, no cuesta
+tokens al final de la llamada (cuando el presupuesto por minuto ya está casi
+agotado) y no puede alucinar un síntoma ni suavizar una decisión.
 
 ## Estructura
 
@@ -95,6 +171,11 @@ techsphere-postop/
 │   ├── voice/
 │   │   ├── deepgram_agent.py   # Sesión Deepgram Voice Agent API (BYOM -> Groq)
 │   │   └── call_routes.py      # WS bridge navegador <-> Deepgram
+│   ├── patients.py             # Contexto de la llamada: cirugía, día postop, RAG por patología
+│   ├── patient_routes.py       # GET /api/procedures para el formulario de llamada
+│   ├── calls.py                # Resumen estructurado y persistente de cada llamada
+│   ├── call_routes_api.py      # GET /api/calls — historial de resúmenes
+│   ├── tokens.py               # Estimación de tokens por turno + calibración vs Groq
 │   ├── metrics.py              # SQLite tracker de latencia/tokens/rag
 │   ├── config.py
 │   └── main.py                 # Entrypoint FastAPI
@@ -128,9 +209,16 @@ techsphere-postop/
   agente lo olvida por completo. Confirmado con contenido inventado
   (no coincide con nada del corpus real) para descartar falsos positivos.
 
-RAG: **107/107 PDFs indexados**, incluyendo el escaneado sin texto (trampa)
-vía OCR (poppler portable incluido en el repo + tesseract instalado en el
-sistema — ver Setup).
+RAG: **106/107 PDFs indexados sin instalar nada extra**. El 107 es el PDF
+escaneado sin capa de texto (la trampa del dataset) y necesita OCR: con
+tesseract instalado en el sistema sube a 107/107 (poppler ya viene portable en
+`bin/`). Sin tesseract el ingest lo reporta como fallido y sigue con el resto,
+no se cae.
+
+Nota de Windows: 3 PDFs de `textos/colorectal cancer/` tienen nombres tan
+largos que la ruta pasa el límite de 260 caracteres. `app/rag/ingest.py` los
+lee a bytes con el prefijo `\\?\` en vez de pasarle la ruta a MuPDF/poppler,
+así que no hace falta habilitar rutas largas (que pide permisos de admin).
 
 ## Pendientes conocidos
 

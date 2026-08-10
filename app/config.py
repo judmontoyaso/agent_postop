@@ -10,11 +10,25 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
-# THINK_PROVIDER: switch temporal para testear con OpenAI cuando Groq se
-# queda sin cuota (TPD/TPM del tier gratis) — NUNCA debe quedar en "openai"
-# para la entrega/demo final: el modelo declarado (G3) es Groq/Llama, usar
-# otro modelo fuera de la lista cerrada descalifica.
+# THINK_PROVIDER: qué modelo razona en el agente.
+#   "groq"   -> Meta Llama vía Groq       (familia permitida, G3)
+#   "google" -> Google Gemini gama Flash  (familia permitida, G3)
+#   "openai" -> NO PERMITIDO por la rúbrica. Solo para depurar en local;
+#               dejarlo puesto en la entrega descalifica.
+# La lista de G3 fija FAMILIAS, no versiones: docs/stack-tecnico.md del reto
+# permite Gemini Flash igual que Llama/Groq. Groq da menor latencia (LPU) y
+# Gemini da un techo de tokens mucho más alto; el informe final debe declarar
+# cuál se usó y por qué.
 THINK_PROVIDER = os.getenv("THINK_PROVIDER", "groq")
+
+# Gemini — API key de Google AI Studio. Las de Vertex AI, Workspace Gemini o
+# Gemini Enterprise NO sirven acá (lo dice la doc de Deepgram explícitamente).
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+# gemini-2.5-flash ya no se sirve ("no longer available", verificado contra la
+# API). Los que sí responden Y están en la lista soportada por Deepgram:
+# gemini-3.5-flash, gemini-3.1-flash-lite, gemini-3-flash-preview.
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 

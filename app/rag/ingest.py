@@ -12,6 +12,7 @@ Alimenta la colección desde:
   add/delete en caliente sin reiniciar el proceso.
 """
 import logging
+import os
 import uuid
 from pathlib import Path
 
@@ -31,8 +32,27 @@ CHUNK_SIZE = 800
 CHUNK_OVERLAP = 150
 
 
+def _read_pdf_bytes(path: Path) -> bytes:
+    """Lee el PDF a memoria en vez de pasarle la ruta a pymupdf/poppler.
+
+    El dataset oficial trae 3 PDFs en `textos/colorectal cancer/` cuyo nombre
+    deja la ruta completa por encima del MAX_PATH de Windows (260 chars; el
+    peor llega a ~296 bajo una carpeta de proyecto normal). Habilitar rutas
+    largas es una llave de registro que pide admin — no se le puede exigir al
+    jurado, y sin ella esos 3 archivos fallan al abrirse.
+
+    El prefijo `\\\\?\\` sí levanta el límite sin permisos ni cambios de
+    sistema, y leer bytes evita depender de cómo maneje rutas cada librería
+    de abajo (MuPDF y poppler son binarios nativos, no heredan el fix)."""
+    p = os.path.abspath(str(path))
+    if os.name == "nt" and len(p) >= 248 and not p.startswith("\\\\?\\"):
+        p = "\\\\?\\" + p
+    with open(p, "rb") as fh:
+        return fh.read()
+
+
 def _extract_text_pymupdf(path: Path) -> str:
-    doc = pymupdf.open(str(path))
+    doc = pymupdf.open(stream=_read_pdf_bytes(path), filetype="pdf")
     text = "\n".join(page.get_text() for page in doc)
     doc.close()
     return text.strip()
@@ -44,7 +64,7 @@ def _extract_text_ocr(path: Path) -> str:
     del PATH — necesario porque el server ya corriendo no ve actualizaciones
     de PATH hechas por un instalador después de que arrancó el proceso."""
     import pytesseract
-    from pdf2image import convert_from_path
+    from pdf2image import convert_from_bytes
 
     if TESSERACT_CMD:
         pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
@@ -53,7 +73,9 @@ def _extract_text_ocr(path: Path) -> str:
     if POPPLER_PATH:
         convert_kwargs["poppler_path"] = POPPLER_PATH
 
-    images = convert_from_path(str(path), **convert_kwargs)
+    # convert_from_bytes (no ..._from_path): poppler es un .exe nativo al que
+    # se le pasaría la ruta larga tal cual y fallaría — ver _read_pdf_bytes.
+    images = convert_from_bytes(_read_pdf_bytes(path), **convert_kwargs)
     return "\n".join(pytesseract.image_to_string(img, lang="spa+eng") for img in images).strip()
 
 

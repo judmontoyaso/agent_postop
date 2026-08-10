@@ -2,13 +2,21 @@ fastapi==0.115.0
 uvicorn[standard]==0.32.0
 python-dotenv==1.0.1
 httpx==0.27.2
+# websockets 13.x y 14+ exponen `connect` con kwargs distintos para los headers.
+# app/voice/deepgram_agent.py importa websockets.asyncio.client.connect por su
+# ruta real justo para no depender de cuál de las dos quede instalada.
 websockets==13.1
 
 # LLM
 groq==0.11.0
 
 # RAG
-chromadb==0.5.20
+# chromadb 1.x en vez de 0.5.20: 0.5.20 pinea chroma-hnswlib==0.7.6, que solo
+# se publica como sdist (sin wheels) y exige Visual Studio Build Tools para
+# compilar en Windows. La 1.x trae binarios propios y no depende de hnswlib.
+# API usada (PersistentClient / get_or_create_collection / upsert / query /
+# get / delete-where) es idéntica; verificado ingest→query→delete end-to-end.
+chromadb>=1.5,<2
 sentence-transformers==3.2.1
 pymupdf==1.24.13
 openpyxl==3.1.5
