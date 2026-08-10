@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Llamada — Seguimiento postoperatorio</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    font-family: system-ui, sans-serif; max-width: 480px; margin: 2rem auto; padding: 0 1rem;
+    background: #0b0d12; color: #e8e8ea; text-align: center;
+  }
+  h1 { font-size: 1.1rem; font-weight: 500; color: #9a9aa5; }
+
+  #orb-wrap { display: flex; justify-content: center; margin: 2.5rem 0 1.5rem; }
+  #orb {
+    width: 140px; height: 140px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #4c6fff, #1b2a6b);
+    box-shadow: 0 0 0 0 rgba(76,111,255,0.5);
+    transition: transform 0.06s ease-out, box-shadow 0.06s ease-out, background 0.3s ease;
+    cursor: pointer;
+  }
+  #orb.speaking { background: radial-gradient(circle at 35% 30%, #4cffb0, #0b6b46); }
+  #orb.error { background: radial-gradient(circle at 35% 30%, #ff4c4c, #6b0b0b); }
+
+  #state { margin-top: 0.5rem; font-size: 0.95rem; color: #b6b6bf; min-height: 1.4em; }
+  #errorBox {
+    display: none; margin-top: 1rem; padding: 0.75rem 1rem; border-radius: 8px;
+    background: #3a1414; color: #ff9d9d; font-size: 0.85rem; text-align: left;
+  }
+  #startBtn {
+    font-size: 1rem; padding: 0.7rem 1.4rem; cursor: pointer; border: none; border-radius: 999px;
+    background: #4c6fff; color: white; margin-top: 0.5rem;
+  }
+  #startBtn:disabled { background: #333; color: #888; cursor: default; }
+  #transcript {
+    margin-top: 1.5rem; text-align: left; white-space: pre-wrap;
+    background: #14161c; border-radius: 8px; padding: 1rem; min-height: 160px;
+    font-size: 0.88rem; line-height: 1.5; color: #c9c9d2;
+  }
+</style>
+</head>
+<body>
+  <h1>Seguimiento postoperatorio — llamada</h1>
+
+  <div id="orb-wrap"><div id="orb"></div></div>
+  <div id="state">Inactivo</div>
+  <button id="startBtn">Iniciar llamada</button>
+
+  <div id="errorBox"></div>
+  <div id="transcript"></div>
+
+<script>
+const orb = document.getElementById('orb');
+const startBtn = document.getElementById('startBtn');
+const stateEl = document.getElementById('state');
+const errorBox = document.getElementById('errorBox');
+const transcriptEl = document.getElementById('transcript');
+
+let ws, micCtx, micStream, processor, analyser;
+let playCtx, nextPlayTime = 0;
+let animationFrame;
+
+function showError(msg) {
+  errorBox.style.display = 'block';
+  errorBox.textContent = msg;
+  orb.classList.add('error');
+  stateEl.textContent = 'Error';
+}
+
+function setSpeaking(isSpeaking) {
+  orb.classList.toggle('speaking', isSpeaking);
+}
+
+function pulseFromLevel(level) {
+  // level 0..1 -> escala visual del orbe (idle late a ~1.0, hablando fuerte hasta ~1.35)
+  const scale = 1 + Math.min(level * 1.8, 0.35);
+  const glow = Math.min(level * 40, 22);
+  orb.style.transform = `scale(${scale})`;
+  orb.style.boxShadow = `0 0 ${glow * 2}px ${glow}px rgba(76,111,255,0.35)`;
+}
+
+function meterLoop() {
+  if (!analyser) return;
+  const data = new Uint8Array(analyser.frequencyBinCount);
+  analyser.getByteTimeDomainData(data);
+  let sum = 0;
+  for (let i = 0; i < data.length; i++) {
+    const v = (data[i] - 128) / 128;
+    sum += v * v;
+  }
+  const rms = Math.sqrt(sum / data.length);
+  pulseFromLevel(rms);
+  animationFrame = requestAnimationFrame(meterLoop);
+}
+
+function playPcm16Chunk(buf) {
+  // Audio TTS que llega de Deepgram: PCM16 mono a 24kHz (ver Settings en deepgram_agent.py).
+  if (!playCtx) playCtx = new AudioContext();
+  const int16 = new Int16Array(buf);
+  const float32 = new Float32Array(int16.length);
+  for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768;
+
+  const audioBuffer = playCtx.createBuffer(1, float32.length, 24000);
+  audioBuffer.copyToChannel(float32, 0);
+
+  const source = playCtx.createBufferSource();
+  source.buffer = audioBuffer;
+  source.connect(playCtx.destination);
+
+  const now = playCtx.currentTime;
+  const startAt = Math.max(now, nextPlayTime);
+  source.start(startAt);
+  nextPlayTime = startAt + audioBuffer.duration;
+
+  setSpeaking(true);
+  source.onended = () => {
+    if (playCtx.currentTime >= nextPlayTime - 0.05) setSpeaking(false);
+  };
+}
+
+let sentChunks = 0;
+
+async function startCall() {
+  errorBox.style.display = 'none';
+  orb.classList.remove('error');
+  startBtn.disabled = true;
+  sentChunks = 0;
+  stateEl.textContent = 'Pidiendo permiso de micrófono...';
+
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    showError(`No se pudo acceder al micrófono: ${e.name} — ${e.message}. Revisa permisos del navegador.`);
+    startBtn.disabled = false;
+    return;
+  }
+
+  // Armar el pipeline de audio YA (pegado al gesto de click), no esperar a que
+  // abra el WS — algunos navegadores arrancan el AudioContext "suspended" si
+  // se crea muy lejos del gesto de usuario original, y onaudioprocess nunca
+  // dispara (falla en silencio, sin error visible).
+  //
+  // No forzamos sampleRate:16000 en el constructor — pedirle un sampleRate
+  // específico al AudioContext no siempre se respeta según navegador/hardware
+  // (fallaba en silencio: mandábamos audio a la tasa nativa del mic pero
+  // etiquetado como 16kHz, Deepgram recibía la voz "acelerada"/distorsionada
+  // y nunca detectaba habla). Tomamos la tasa nativa y resampleamos nosotros.
+  micCtx = new AudioContext();
+  if (micCtx.state === 'suspended') await micCtx.resume();
+  const nativeSampleRate = micCtx.sampleRate;
+
+  const source = micCtx.createMediaStreamSource(micStream);
+
+  analyser = micCtx.createAnalyser();
+  analyser.fftSize = 512;
+  source.connect(analyser);
+  meterLoop();
+
+  function downsampleTo16k(float32, inputRate) {
+    if (inputRate === 16000) return float32;
+    const ratio = inputRate / 16000;
+    const outLength = Math.round(float32.length / ratio);
+    const out = new Float32Array(outLength);
+    for (let i = 0; i < outLength; i++) {
+      const srcPos = i * ratio;
+      const i0 = Math.floor(srcPos);
+      const i1 = Math.min(i0 + 1, float32.length - 1);
+      const frac = srcPos - i0;
+      out[i] = float32[i0] * (1 - frac) + float32[i1] * frac;
+    }
+    return out;
+  }
+
+  processor = micCtx.createScriptProcessor(4096, 1, 1);
+  source.connect(processor);
+  processor.connect(micCtx.destination);
+  processor.onaudioprocess = (e) => {
+    const input = downsampleTo16k(e.inputBuffer.getChannelData(0), nativeSampleRate);
+    const pcm16 = new Int16Array(input.length);
+    for (let i = 0; i < input.length; i++) {
+      pcm16[i] = Math.max(-32768, Math.min(32767, input[i] * 32768));
+    }
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(pcm16.buffer);
+      sentChunks++;
+      stateEl.textContent = `En llamada (mic nativo ${nativeSampleRate}Hz → 16kHz) — enviados ${sentChunks} fragmentos`;
+    }
+  };
+
+  stateEl.textContent = 'Conectando con el agente...';
+  ws = new WebSocket(`ws://${location.host}/ws/call`);
+  ws.binaryType = 'arraybuffer';
+
+  ws.onerror = () => {
+    showError('No se pudo conectar al backend (/ws/call). ¿Está corriendo el servidor?');
+  };
+
+  ws.onopen = () => {
+    stateEl.textContent = 'En llamada — habla cuando quieras';
+  };
+
+  ws.onmessage = (event) => {
+    if (typeof event.data === 'string') {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'ConversationText') {
+          transcriptEl.textContent += `${msg.role}: ${msg.content}\n`;
+          transcriptEl.scrollTop = transcriptEl.scrollHeight;
+        } else if (msg.type === 'Error') {
+          showError(`Deepgram: ${msg.description || JSON.stringify(msg)}`);
+        }
+      } catch { /* mensaje no-JSON, ignorar */ }
+    } else {
+      playPcm16Chunk(event.data);
+    }
+  };
+
+  ws.onclose = () => {
+    stateEl.textContent = 'Llamada finalizada';
+    cancelAnimationFrame(animationFrame);
+    orb.style.transform = 'scale(1)';
+    orb.style.boxShadow = 'none';
+    setSpeaking(false);
+    startBtn.disabled = false;
+    if (micStream) micStream.getTracks().forEach(t => t.stop());
+  };
+}
+
+startBtn.onclick = startCall;
+</script>
+</body>
+</html>

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Admin — Base de conocimiento clínico</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 700px; margin: 2rem auto; padding: 0 1rem; }
+  table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+  td, th { border-bottom: 1px solid #ddd; padding: 0.5rem; text-align: left; }
+  button { cursor: pointer; }
+  #status { color: #666; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+  <h1>Consola admin — documentos clínicos</h1>
+  <input type="file" id="fileInput" accept="application/pdf">
+  <button id="uploadBtn">Subir PDF</button>
+  <p id="status"></p>
+  <table id="docsTable">
+    <thead><tr><th>Archivo</th><th>Chunks</th><th>ID</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+<script>
+const statusEl = document.getElementById('status');
+const tbody = document.querySelector('#docsTable tbody');
+
+async function loadDocs() {
+  const res = await fetch('/api/admin/documents');
+  const data = await res.json();
+  tbody.innerHTML = '';
+  for (const doc of data.documents) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${doc.source}</td><td>${doc.chunks}</td><td>${doc.source_id}</td>
+      <td><button data-id="${doc.source_id}">Borrar</button></td>`;
+    tbody.appendChild(tr);
+  }
+  tbody.querySelectorAll('button').forEach(btn => {
+    btn.onclick = async () => {
+      await fetch(`/api/admin/documents/${btn.dataset.id}`, { method: 'DELETE' });
+      statusEl.textContent = `Borrado ${btn.dataset.id} — el agente ya no lo usa.`;
+      loadDocs();
+    };
+  });
+}
+
+document.getElementById('uploadBtn').onclick = async () => {
+  const file = document.getElementById('fileInput').files[0];
+  if (!file) return;
+  statusEl.textContent = 'Subiendo e indexando...';
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch('/api/admin/documents', { method: 'POST', body: form });
+  const data = await res.json();
+  statusEl.textContent = data.error
+    ? `Error: ${data.error}`
+    : `Indexado: ${data.file} (${data.chunks} chunks${data.used_ocr ? ', via OCR' : ''})`;
+  loadDocs();
+};
+
+loadDocs();
+</script>
+</body>
+</html>
