@@ -1,12 +1,10 @@
 """scripts/setup_check.py — Verifica que el setup cumple el gate G2 (<=15 min).
 Corre esto después de seguir el README desde cero, antes de grabar el demo."""
 import os
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
 from dotenv import load_dotenv
+
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 

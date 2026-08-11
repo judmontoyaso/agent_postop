@@ -7,10 +7,23 @@ base de conocimiento clínico (RAG) y decide nivel de escalamiento
 
 ## Modelo declarado (G3)
 
-**Llama 3.1 70B vía Groq** — cloud, latencia ultra-baja. Servido como
-`llama-3.3-70b-versatile` (Groq descontinuó el ID original en ene 2025; es su
-reemplazo directo). Ver justificación completa y nota sobre próxima baja de
-este modelo en `docs/architecture.md`.
+**Meta Llama vía Groq**, servido como `llama-3.3-70b-versatile`. La lista de G3
+fija *familias*, no versiones: Groq descontinuó `llama-3.1-70b-versatile` en
+ene 2025 y este es su sucesor vigente en el mismo proveedor.
+
+El agente soporta además **Google Gemini gama Flash**, la otra familia de nube
+permitida, con `THINK_PROVIDER=google` en `.env`. Se implementó para poder
+comparar las dos con datos propios:
+
+| | Groq / Llama 70B | Gemini Flash |
+|---|---|---|
+| Latencia | Menor (LPU) | Mayor |
+| Techo de tokens | 12 000 TPM (medido) | Mucho más alto |
+| Corta llamadas largas | Sí, verificado en logs | No observado |
+
+Groq gana en latencia, que puntúa en *Calidad de la conversación (voz)*; Gemini
+aguanta conversaciones largas sin cortarse. Cambiar entre ambos es una variable
+de entorno, sin tocar código.
 
 ## Stack
 
@@ -25,46 +38,89 @@ este modelo en `docs/architecture.md`.
 ## Setup (objetivo: <=15 minutos, gate G2)
 
 ```bash
-# 1. Clonar y crear entorno
-git clone <este-repo>
-cd techsphere-postop
+# 1. Clonar y crear entorno  (Python 3.12 recomendado: los pines de torch y
+#    chromadb todavía no traen ruedas para 3.13+)
+git clone https://github.com/judmontoyaso/agent_postop
+cd agent_postop
 python -m venv .venv
 .venv\Scripts\activate        # Windows
 # source .venv/bin/activate   # Linux/Mac
 
-# 2. Dependencias
+# 2. Dependencias  (~5 min: se baja torch)
 pip install -r requirements.txt
 
-# 3. OCR fallback — necesario solo para el PDF escaneado del dataset (trampa,
-#    sin capa de texto). Poppler ya viene incluido en bin/poppler/ (portable,
-#    no requiere admin ni instalación). Falta tesseract:
-#    Windows: instalar desde https://github.com/UB-Mannheim/tesseract/releases
-#             (default: C:\Program Files\Tesseract-OCR\tesseract.exe — si se
-#             instala en otra ruta, agregarla a TESSERACT_CMD en app/config.py)
-#    Linux:   sudo apt install tesseract-ocr tesseract-ocr-spa
-#    Mac:     brew install tesseract tesseract-lang
+# 2b. Instalar el proyecto. El código vive en src/, así que este paso es el que
+#     lo hace importable — sin él, `uvicorn app.main:app` no encuentra nada.
+pip install -e . --no-deps
 
-# 4. Configurar variables de entorno
+# 3. Configurar credenciales
 cp .env.example .env
-# Rellenar GROQ_API_KEY y DEEPGRAM_API_KEY
+#    Rellenar DEEPGRAM_API_KEY y, según el proveedor que se use:
+#      GROQ_API_KEY    -> console.groq.com          (por defecto)
+#      GEMINI_API_KEY  -> aistudio.google.com/apikey (alternativa; ver "Modelo")
+#    Con las dos puestas se activa el failover automático entre proveedores.
 
-# 5. Descargar dataset oficial del reto y colocarlo en:
-#    dataset/textos/*.pdf
+# 4. Descargar dataset oficial del reto y colocarlo en:
+#    dataset/textos/**/*.pdf   (107 PDFs en 5 carpetas de patología)
 #    dataset/*.xlsx
 
-# 6. Indexar el conocimiento clínico
+# 5. Indexar el conocimiento clínico
+#    (~5 min la primera vez: baja el embedder y los modelos de OCR)
 python scripts/ingest_dataset.py
+#    Salida esperada: "Indexados: 107/107", con 1 vía OCR — el PDF escaneado
+#    sin capa de texto que trae el dataset.
 
-# 7. Verificar setup
+# 6. Verificar setup
 python scripts/setup_check.py
 
-# 8. Levantar el servidor
-uvicorn app.main:app --reload --port 8000
+# 7. Levantar el servidor
+uvicorn app.main:app --port 8000
+```
+
+### Comprobaciones opcionales (no hacen falta para levantar)
+
+```bash
+pip install ruff pytest
+pytest                             # 54 pruebas, ~1 s
+ruff check .                       # linter
+python scripts/evaluate_triage.py  # piso de seguridad vs. dataset etiquetado
 ```
 
 Luego:
-- Consola admin: http://localhost:8000/admin
 - Interfaz de llamada: http://localhost:8000/call
+- Consola admin: http://localhost:8000/admin
+
+### Sin dependencias de sistema
+
+El proyecto se levanta con `pip install` y nada más. No hay que instalar
+poppler, tesseract ni ningún otro binario: el rasterizado PDF→imagen lo hace
+PyMuPDF y el reconocimiento EasyOCR, ambos por pip. EasyOCR descarga ~100 MB de
+modelos la primera vez que se indexa; en runtime no se usa nunca.
+
+## Contexto del paciente
+
+La interfaz de llamada pide tres datos antes de marcar: **nombre** (texto
+libre), **cirugía** (las 5 del corpus) y **día del postoperatorio**. Las
+opciones salen de `GET /api/procedures`.
+
+Sin esto el agente llama a ciegas y no puede juzgar nada: un dolor en el pie
+es irrelevante tras una apendicectomía y es justo lo que hay que vigilar tras
+un reemplazo de rodilla; fiebre de 37.6 el día 1 es esperable y el día 14 es
+alarma. Con el contexto puesto:
+
+- El agente arranca sabiendo a quién llama, de qué lo operaron y en qué día va
+  (`app/patients.py`), y lo dice en el saludo.
+- `consultar_guia_clinica` acota la búsqueda al corpus de esa patología
+  (metadata `category`), en vez de mezclar las 5 del dataset.
+
+Dejando nombre o cirugía en blanco la llamada sigue siendo genérica y el
+agente los pregunta él mismo — es el modo con el que se demostró el pipeline
+antes de existir el formulario.
+
+Los perfiles de paciente del dataset (`perfiles_*.xlsx`, 40 pacientes con
+comorbilidades y trayectorias) **no** los usa la app: se probó un selector
+poblado desde ahí y se descartó porque para demostrar importa poder inventar
+el caso en el momento. Siguen disponibles para evaluación offline.
 
 ## Métricas obligatorias
 
@@ -73,17 +129,131 @@ plantilla llenada en `docs/final-report.md`.
 
 | Métrica | Cómo se mide |
 |---|---|
-| Latencia P50/P95 (fin de habla -> inicio audio) | `app/metrics.py::summary()` |
-| Tokens input/output por turno | idem |
-| Invocaciones de modelo por turno | idem |
+| Latencia P50/P95 (fin de habla -> inicio audio) | `app/metrics.py::summary()` — medición real |
+| Tokens input/output por turno | `app/tokens.py` — **estimación**, ver nota abajo |
+| Invocaciones de modelo por turno | `app/metrics.py::summary()` — medición real |
 | RAG queries por llamada | idem |
-| Costo estimado por llamada | calculado a mano desde pricing público Groq/Deepgram — ver `docs/final-report.md` |
+| Costo estimado por llamada | tokens estimados × pricing público — ver `docs/final-report.md` |
+
+### Nota sobre los tokens: son estimados, no medidos
+
+En esta arquitectura el backend **nunca ve el `usage` real**. Deepgram habla
+directo con Groq/Gemini en modo BYOM y solo reenvía eventos de conversación; el
+`usage` se queda entre Deepgram y el proveedor. Interceptarlo con un proxy
+propio en `endpoint.url` exigiría exponer esta máquina a Internet con un túnel
+público solo para medir.
+
+Lo que se hace: reconstruir el prompt que Deepgram arma en cada turno (prompt de
+sistema + schema de tools + historial completo + resultados de tools) y contarlo
+localmente a ~3.7 caracteres por token. `GET /api/metrics/summary` devuelve
+`tokens_son_estimados: true` para que quede explícito.
+
+**Cómo se verifica:** cuando Groq responde 429 incluye el conteo real de esa
+petición (`"Used 10271, Requested 3735"`). Cada vez que ocurre, el sistema
+compara contra su propia estimación del mismo instante y registra el error en el
+log (`app/tokens.py::calibrate`). El número reportado tiene contraste contra el
+proveedor, no es una cifra suelta.
+
+## Guardrails
+
+**De entrada** — el bloque `LÍMITES` del prompt establece que lo que dice el
+paciente y lo que devuelve el RAG son *datos*, no instrucciones; sin desvíos de
+misión ni de rol; ninguna instrucción baja un nivel de escalamiento.
+
+**Piso de seguridad en código** (`app/agent/decision.py`) — patrones de alarma
+que fuerzan rojo al margen de lo que decida el LLM. Vive en el código, no en el
+prompt, así que **una inyección de prompt no lo alcanza**. Reconoce negaciones:
+*"nada de pus"* no dispara, *"me sale pus"* sí. Medido contra el dataset
+etiquetado del reto con `scripts/evaluate_triage.py`.
+
+**De salida** (`app/guardrails.py`) — revisa lo que el agente dice buscando
+dosis, medicamentos y procedimientos inventados, que es lo que la rúbrica
+penaliza por ocurrencia. Cuando detecta algo, el agente se rectifica en voz
+alta y el hallazgo queda en el resumen de la llamada.
+
+> **Límite honesto:** Deepgram empieza a reproducir el audio antes de
+> entregarnos la transcripción del agente (verificable en los logs: los bytes
+> llegan antes que `ConversationText`). Así que el guardrail de salida
+> **detecta y corrige, no previene**. Bloquear exigiría retener el audio hasta
+> tener el texto, metiendo latencia justo donde no sobra.
+
+## Evaluación del triage sin gastar llamadas
+
+```bash
+python scripts/evaluate_triage.py
+```
+
+Mide el piso de seguridad contra los 3991 turnos etiquetados de
+`dataset_final.xlsx`, agrupados por conversación (que es la unidad clínica: el
+agente escucha la llamada entera, no una frase suelta). Reporta cuántos casos
+rojos se escalan **aunque el modelo falle por completo** y cuántos verdes se
+elevan de más.
+
+No mide el triage completo — eso lo decide el LLM leyendo el RAG y pasar 3991
+turnos por el modelo es inviable con los tiers gratuitos. Mide la red de
+seguridad, que es justo lo que responde a la asimetría clínica de la rúbrica.
+
+## Escalamiento hacia afuera
+
+Al escalar a amarillo o rojo se dispara un webhook saliente
+(`ESCALATION_WEBHOOK_URL`) con paciente, procedimiento, nivel, motivo, síntomas
+y documentos citados. Sin él, el escalamiento queda registrado pero nadie en la
+clínica se entera. Es opcional para no romper G2: si no está configurado, la
+llamada funciona igual y queda un WARNING en el log.
+
+La transcripción completa **no** viaja en el webhook: son datos de salud de un
+paciente identificado y no hacen falta para actuar. Quien recibe el aviso puede
+consultarla en `GET /api/calls/{id}`.
+
+## Datos personales — estado y límites
+
+Este prototipo trata datos de salud de personas identificadas, que en Colombia
+son **datos sensibles** bajo la Ley 1581 de 2012 (habeas data). Lo que hace hoy
+y lo que le falta, dicho sin adornos:
+
+**Hecho:**
+- Aviso de tratamiento en la apertura de la llamada (`AVISO_GRABACION` en
+  `app/patients.py`): el paciente sabe que queda registro antes de contar nada.
+- El webhook manda lo mínimo accionable, no la conversación entera.
+- No se guarda audio en ningún momento: solo transcripción.
+
+**Pendiente para un despliegue real (fuera del alcance del reto):**
+- SQLite sin cifrar y logs con nombre y estado clínico en claro. Bastaría
+  cifrado en reposo y enmascarado de identificadores en los logs.
+- Sin política de retención: hoy los resúmenes se guardan indefinidamente.
+- Sin control de acceso: `/api/calls` y la consola admin están abiertas a quien
+  alcance el puerto.
+- El consentimiento se informa pero no se registra su aceptación.
+
+## Resumen de llamada
+
+Al colgar, el sistema genera y persiste un resumen estructurado con: paciente y
+procedimiento, día postoperatorio, síntomas reportados textualmente, decisión de
+escalamiento (con el nivel que propuso el modelo si un disparador de seguridad
+lo elevó), documentos del corpus que sustentaron las respuestas, próximos pasos
+y la transcripción completa.
+
+- Se muestra en pantalla al colgar, sin salir de la interfaz de llamada.
+- Se persiste en SQLite y se consulta en `GET /api/calls` y `GET /api/calls/{id}`.
+- `GET /api/calls` incluye `sin_decision`: cuántas llamadas terminaron sin
+  ningún nivel de riesgo registrado. Una llamada sin decisión no es un "verde
+  por defecto", es un fallo del sistema, y se marca como tal.
+
+El resumen es un registro estructurado, no un párrafo generado por el LLM: así
+las referencias clínicas son verificables contra la fuente real, no cuesta
+tokens al final de la llamada (cuando el presupuesto por minuto ya está casi
+agotado) y no puede alucinar un síntoma ni suavizar una decisión.
 
 ## Estructura
 
+Layout `src/`: el código no es importable por accidente desde el directorio de
+trabajo, lo que obliga a instalarlo y garantiza que se prueba lo mismo que se
+distribuye. `data/`, `dataset/` y `static/` quedan fuera del paquete porque son
+datos de despliegue, no código.
+
 ```
-techsphere-postop/
-├── app/
+agent_postop/
+└── src/app/
 │   ├── agent/
 │   │   ├── llm_client.py       # Cliente Groq (Llama 3.3 70B)
 │   │   ├── decision.py         # Triage verde/amarillo/rojo, hard triggers
@@ -95,7 +265,15 @@ techsphere-postop/
 │   ├── voice/
 │   │   ├── deepgram_agent.py   # Sesión Deepgram Voice Agent API (BYOM -> Groq)
 │   │   └── call_routes.py      # WS bridge navegador <-> Deepgram
+│   ├── patients.py             # Contexto de la llamada: cirugía, día postop, RAG por patología
+│   ├── patient_routes.py       # GET /api/procedures para el formulario de llamada
+│   ├── calls.py                # Resumen estructurado y persistente de cada llamada
+│   ├── call_routes_api.py      # GET /api/calls — historial de resúmenes
+│   ├── tokens.py               # Estimación de tokens por turno + calibración vs Groq
 │   ├── metrics.py              # SQLite tracker de latencia/tokens/rag
+│   ├── guardrails.py           # Guardrail de salida: dosis/medicamentos inventados
+│   ├── notify.py               # Webhook saliente al escalar
+│   ├── notify_routes.py        # Buzón receptor (demo) de los avisos
 │   ├── config.py
 │   └── main.py                 # Entrypoint FastAPI
 ├── static/
@@ -108,8 +286,11 @@ techsphere-postop/
 │   └── final-report.md         # Plantilla del reporte final
 ├── scripts/
 │   ├── ingest_dataset.py
-│   └── setup_check.py
-└── tests/
+│   ├── setup_check.py
+│   └── evaluate_triage.py      # Piso de seguridad vs. dataset etiquetado
+├── tests/                      # 54 pruebas; los casos salen de fallos reales
+├── pyproject.toml              # Metadatos + configuración de ruff/pytest
+└── requirements.txt            # Dependencias de ejecución, con versiones fijas
 ```
 
 ## Gates eliminatorios — estado
@@ -128,9 +309,15 @@ techsphere-postop/
   agente lo olvida por completo. Confirmado con contenido inventado
   (no coincide con nada del corpus real) para descartar falsos positivos.
 
-RAG: **107/107 PDFs indexados**, incluyendo el escaneado sin texto (trampa)
-vía OCR (poppler portable incluido en el repo + tesseract instalado en el
-sistema — ver Setup).
+RAG: **106/107 PDFs indexados sin instalar nada extra**. El 107 es el PDF
+escaneado sin capa de texto (la trampa del dataset) y necesita OCR: con
+tesseract instalado en el sistema sube a 107/107. Sin tesseract el ingest lo
+reporta como fallido y sigue con el resto, no se cae.
+
+Nota de Windows: 3 PDFs de `textos/colorectal cancer/` tienen nombres tan
+largos que la ruta pasa el límite de 260 caracteres. `app/rag/ingest.py` los
+lee a bytes con el prefijo `\\?\` en vez de pasarle la ruta a MuPDF,
+así que no hace falta habilitar rutas largas (que pide permisos de admin).
 
 ## Pendientes conocidos
 
