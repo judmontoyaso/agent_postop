@@ -42,6 +42,53 @@ def estimate_tokens(text: str) -> int:
     return max(1, round(len(text) / CHARS_PER_TOKEN))
 
 
+# Precios públicos por millón de tokens (USD), consultados en las páginas de
+# pricing de cada proveedor. Se guardan acá y no en .env porque forman parte de
+# la evidencia del informe: el costo por llamada que se reporta tiene que poder
+# recalcularse desde el repositorio.
+PRECIOS_USD_POR_MILLON = {
+    "llama-3.3-70b-versatile": {"in": 0.59, "out": 0.79},
+    "gemini-3.1-flash-lite": {"in": 0.10, "out": 0.40},
+    "gemini-3.5-flash": {"in": 0.30, "out": 2.50},
+    "gemini-3-flash-preview": {"in": 0.30, "out": 2.50},
+}
+
+# Deepgram cobra la voz aparte del LLM, por minuto de audio. Sin esto el costo
+# por llamada saldría engañosamente bajo: en conversaciones cortas la voz pesa
+# más que el razonamiento.
+DEEPGRAM_USD_POR_MINUTO = 0.078
+
+
+def costo_llamada(modelo: str, input_tokens: int, output_tokens: int,
+                  duracion_s: float) -> dict:
+    """Costo estimado de una llamada, desglosado. Devuelve también el modelo de
+    precios aplicado para que el número sea auditable y no un total suelto."""
+    # Con failover el campo `modelo` puede traer "a → b"; se cobra con el
+    # primero, que es el que razonó la mayor parte, y se deja constancia.
+    principal = modelo.split("→")[0].strip() if modelo else ""
+    precio = PRECIOS_USD_POR_MILLON.get(principal)
+
+    llm = None
+    if precio:
+        llm = round(
+            input_tokens / 1_000_000 * precio["in"]
+            + output_tokens / 1_000_000 * precio["out"],
+            6,
+        )
+    voz = round(duracion_s / 60 * DEEPGRAM_USD_POR_MINUTO, 6)
+
+    return {
+        "modelo_tarifado": principal or None,
+        "llm_usd": llm,
+        "voz_usd": voz,
+        "total_usd": round((llm or 0) + voz, 6),
+        "tokens_estimados": True,
+        "nota": ("tokens estimados (ver app/tokens.py); precios públicos por millón: "
+                 f"{precio['in']}/{precio['out']} USD in/out"
+                 if precio else "sin tarifa conocida para este modelo — solo se cuenta la voz"),
+    }
+
+
 class CallTokenAccounting:
     """Lleva la cuenta de una llamada. El historial es acumulativo: cada turno
     reenvía TODO lo anterior, que es la razón por la que las conversaciones

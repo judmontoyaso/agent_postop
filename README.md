@@ -38,46 +38,55 @@ de entorno, sin tocar código.
 ## Setup (objetivo: <=15 minutos, gate G2)
 
 ```bash
-# 1. Clonar y crear entorno
-git clone <este-repo>
-cd techsphere-postop
+# 1. Clonar y crear entorno  (Python 3.12 recomendado: los pines de torch y
+#    chromadb todavía no traen ruedas para 3.13+)
+git clone https://github.com/judmontoyaso/agent_postop
+cd agent_postop
 python -m venv .venv
 .venv\Scripts\activate        # Windows
 # source .venv/bin/activate   # Linux/Mac
 
-# 2. Dependencias
+# 2. Dependencias  (~5 min: se baja torch)
 pip install -r requirements.txt
 
-# 3. OCR fallback — necesario solo para el PDF escaneado del dataset (trampa,
-#    sin capa de texto). Poppler ya viene incluido en bin/poppler/ (portable,
-#    no requiere admin ni instalación). Falta tesseract:
-#    Windows: instalar desde https://github.com/UB-Mannheim/tesseract/releases
-#             (default: C:\Program Files\Tesseract-OCR\tesseract.exe — si se
-#             instala en otra ruta, agregarla a TESSERACT_CMD en app/config.py)
-#    Linux:   sudo apt install tesseract-ocr tesseract-ocr-spa
-#    Mac:     brew install tesseract tesseract-lang
-
-# 4. Configurar variables de entorno
+# 3. Configurar credenciales
 cp .env.example .env
-# Rellenar GROQ_API_KEY y DEEPGRAM_API_KEY
+#    Rellenar DEEPGRAM_API_KEY y, según el proveedor que se use:
+#      GROQ_API_KEY    -> console.groq.com          (por defecto)
+#      GEMINI_API_KEY  -> aistudio.google.com/apikey (alternativa; ver "Modelo")
+#    Con las dos puestas se activa el failover automático entre proveedores.
 
-# 5. Descargar dataset oficial del reto y colocarlo en:
-#    dataset/textos/*.pdf
+# 4. Descargar dataset oficial del reto y colocarlo en:
+#    dataset/textos/**/*.pdf   (107 PDFs en 5 carpetas de patología)
 #    dataset/*.xlsx
 
-# 6. Indexar el conocimiento clínico
+# 5. Indexar el conocimiento clínico  (~3 min la primera vez: baja el embedder)
 python scripts/ingest_dataset.py
+#    Salida esperada: "Indexados: 106/107". El que falta es el PDF escaneado
+#    sin capa de texto; ver "OCR opcional" más abajo.
 
-# 7. Verificar setup
+# 6. Verificar setup
 python scripts/setup_check.py
 
-# 8. Levantar el servidor
-uvicorn app.main:app --reload --port 8000
+# 7. Levantar el servidor
+uvicorn app.main:app --port 8000
 ```
 
 Luego:
-- Consola admin: http://localhost:8000/admin
 - Interfaz de llamada: http://localhost:8000/call
+- Consola admin: http://localhost:8000/admin
+
+### OCR opcional — el PDF escaneado (106/107 → 107/107)
+
+El dataset trae un PDF escaneado sin capa de texto. **No hace falta para nada
+de lo anterior**: el ingest lo reporta como fallido y sigue con el resto. Para
+indexarlo también, instalar tesseract (poppler ya viene portable en `bin/`):
+
+- Windows: https://github.com/UB-Mannheim/tesseract/releases — por defecto en
+  `C:\Program Files\Tesseract-OCR\tesseract.exe`; si va a otra ruta, añadirla
+  a `TESSERACT_CMD` en `app/config.py`.
+- Linux: `sudo apt install tesseract-ocr tesseract-ocr-spa`
+- Mac: `brew install tesseract tesseract-lang`
 
 ## Contexto del paciente
 
@@ -135,6 +144,77 @@ petición (`"Used 10271, Requested 3735"`). Cada vez que ocurre, el sistema
 compara contra su propia estimación del mismo instante y registra el error en el
 log (`app/tokens.py::calibrate`). El número reportado tiene contraste contra el
 proveedor, no es una cifra suelta.
+
+## Guardrails
+
+**De entrada** — el bloque `LÍMITES` del prompt establece que lo que dice el
+paciente y lo que devuelve el RAG son *datos*, no instrucciones; sin desvíos de
+misión ni de rol; ninguna instrucción baja un nivel de escalamiento.
+
+**Piso de seguridad en código** (`app/agent/decision.py`) — patrones de alarma
+que fuerzan rojo al margen de lo que decida el LLM. Vive en el código, no en el
+prompt, así que **una inyección de prompt no lo alcanza**. Reconoce negaciones:
+*"nada de pus"* no dispara, *"me sale pus"* sí. Medido contra el dataset
+etiquetado del reto con `scripts/evaluate_triage.py`.
+
+**De salida** (`app/guardrails.py`) — revisa lo que el agente dice buscando
+dosis, medicamentos y procedimientos inventados, que es lo que la rúbrica
+penaliza por ocurrencia. Cuando detecta algo, el agente se rectifica en voz
+alta y el hallazgo queda en el resumen de la llamada.
+
+> **Límite honesto:** Deepgram empieza a reproducir el audio antes de
+> entregarnos la transcripción del agente (verificable en los logs: los bytes
+> llegan antes que `ConversationText`). Así que el guardrail de salida
+> **detecta y corrige, no previene**. Bloquear exigiría retener el audio hasta
+> tener el texto, metiendo latencia justo donde no sobra.
+
+## Evaluación del triage sin gastar llamadas
+
+```bash
+python scripts/evaluate_triage.py
+```
+
+Mide el piso de seguridad contra los 3991 turnos etiquetados de
+`dataset_final.xlsx`, agrupados por conversación (que es la unidad clínica: el
+agente escucha la llamada entera, no una frase suelta). Reporta cuántos casos
+rojos se escalan **aunque el modelo falle por completo** y cuántos verdes se
+elevan de más.
+
+No mide el triage completo — eso lo decide el LLM leyendo el RAG y pasar 3991
+turnos por el modelo es inviable con los tiers gratuitos. Mide la red de
+seguridad, que es justo lo que responde a la asimetría clínica de la rúbrica.
+
+## Escalamiento hacia afuera
+
+Al escalar a amarillo o rojo se dispara un webhook saliente
+(`ESCALATION_WEBHOOK_URL`) con paciente, procedimiento, nivel, motivo, síntomas
+y documentos citados. Sin él, el escalamiento queda registrado pero nadie en la
+clínica se entera. Es opcional para no romper G2: si no está configurado, la
+llamada funciona igual y queda un WARNING en el log.
+
+La transcripción completa **no** viaja en el webhook: son datos de salud de un
+paciente identificado y no hacen falta para actuar. Quien recibe el aviso puede
+consultarla en `GET /api/calls/{id}`.
+
+## Datos personales — estado y límites
+
+Este prototipo trata datos de salud de personas identificadas, que en Colombia
+son **datos sensibles** bajo la Ley 1581 de 2012 (habeas data). Lo que hace hoy
+y lo que le falta, dicho sin adornos:
+
+**Hecho:**
+- Aviso de tratamiento en la apertura de la llamada (`AVISO_GRABACION` en
+  `app/patients.py`): el paciente sabe que queda registro antes de contar nada.
+- El webhook manda lo mínimo accionable, no la conversación entera.
+- No se guarda audio en ningún momento: solo transcripción.
+
+**Pendiente para un despliegue real (fuera del alcance del reto):**
+- SQLite sin cifrar y logs con nombre y estado clínico en claro. Bastaría
+  cifrado en reposo y enmascarado de identificadores en los logs.
+- Sin política de retención: hoy los resúmenes se guardan indefinidamente.
+- Sin control de acceso: `/api/calls` y la consola admin están abiertas a quien
+  alcance el puerto.
+- El consentimiento se informa pero no se registra su aceptación.
 
 ## Resumen de llamada
 

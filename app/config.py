@@ -42,6 +42,11 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "paraphrase-multilingual-MiniLM-L
 ADMIN_DB_PATH = os.getenv("ADMIN_DB_PATH", str(BASE_DIR / "data" / "admin.db"))
 METRICS_DB_PATH = os.getenv("METRICS_DB_PATH", str(BASE_DIR / "data" / "metrics.db"))
 DATASET_DIR = os.getenv("DATASET_DIR", str(BASE_DIR / "dataset"))
+
+# Webhook al que se avisa cuando una llamada escala a amarillo o rojo. Vacío =
+# no se avisa a nadie (se registra en el log). Opcional a propósito: el
+# proyecto tiene que levantarse sin depender de servicios externos (G2).
+ESCALATION_WEBHOOK_URL = os.getenv("ESCALATION_WEBHOOK_URL", "")
 API_PORT = int(os.getenv("API_PORT", "8000"))
 
 # OCR fallback (PDF escaneado sin texto) — ruta explícita en vez de depender

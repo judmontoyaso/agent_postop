@@ -128,7 +128,11 @@ GREETING = (
 )
 
 
-RECONNECT_LINE = "Perdón, se cortó un momento. Sigo aquí — decías..."
+# Ya no dice "decías..." — eso le pedía al paciente que repitiera, que era lo
+# único que se podía hacer cuando la sesión nueva no recordaba nada. Con la
+# memoria inyectada (app/patients.py::build_memory_prompt) el agente retoma
+# donde iba, así que la línea solo cubre el bache de audio.
+RECONNECT_LINE = "Perdón, se cortó un segundo. Sigo con usted."
 
 
 def available_providers() -> list[str]:

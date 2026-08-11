@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.config import METRICS_DB_PATH
+from app.tokens import costo_llamada
 
 logger = logging.getLogger("calls")
 
@@ -74,9 +75,21 @@ def init_calls_db() -> None:
             proximos_pasos TEXT,
             transcripcion TEXT,
             turnos INTEGER,
-            rag_queries INTEGER
+            rag_queries INTEGER,
+            input_tokens INTEGER,
+            output_tokens INTEGER,
+            costo TEXT,
+            alertas_guardrail TEXT
         )
     """)
+    # Migración en caliente: las bases creadas antes de que la rúbrica exigiera
+    # tokens y costo POR LLAMADA no tienen estas columnas, y borrar el
+    # histórico de llamadas para añadirlas sería perder evidencia del proceso.
+    existentes = {fila[1] for fila in conn.execute("PRAGMA table_info(call_summaries)")}
+    for columna, tipo in (("input_tokens", "INTEGER"), ("output_tokens", "INTEGER"),
+                          ("costo", "TEXT"), ("alertas_guardrail", "TEXT")):
+        if columna not in existentes:
+            conn.execute(f"ALTER TABLE call_summaries ADD COLUMN {columna} {tipo}")
     conn.commit()
     conn.close()
 
@@ -90,8 +103,9 @@ def save_summary(summary: dict[str, Any]) -> None:
             """INSERT OR REPLACE INTO call_summaries
             (call_id, started_at, ended_at, duration_s, paciente, procedimiento,
              dia_postop, modelo, nivel_final, nivel_llm, motivo, escalado,
-             sintomas, referencias, proximos_pasos, transcripcion, turnos, rag_queries)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+             sintomas, referencias, proximos_pasos, transcripcion, turnos, rag_queries,
+             input_tokens, output_tokens, costo, alertas_guardrail)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 summary["call_id"], summary["started_at"], summary["ended_at"],
                 summary["duration_s"], summary["paciente"], summary["procedimiento"],
@@ -102,6 +116,9 @@ def save_summary(summary: dict[str, Any]) -> None:
                 summary["proximos_pasos"],
                 json.dumps(summary["transcripcion"], ensure_ascii=False),
                 summary["turnos"], summary["rag_queries"],
+                summary["input_tokens"], summary["output_tokens"],
+                json.dumps(summary["costo"], ensure_ascii=False),
+                json.dumps(summary["alertas_guardrail"], ensure_ascii=False),
             ),
         )
         conn.commit()
@@ -117,11 +134,15 @@ def save_summary(summary: dict[str, Any]) -> None:
 
 def _row_to_dict(row: sqlite3.Row) -> dict:
     data = dict(row)
-    for campo in ("sintomas", "referencias", "transcripcion"):
+    for campo in ("sintomas", "referencias", "transcripcion", "alertas_guardrail"):
         try:
             data[campo] = json.loads(data[campo] or "[]")
         except (json.JSONDecodeError, TypeError):
             data[campo] = []
+    try:
+        data["costo"] = json.loads(data.get("costo") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        data["costo"] = {}
     data["escalado"] = bool(data["escalado"])
     return data
 
@@ -161,13 +182,17 @@ def build_summary(
     transcripcion: list[dict],
     turnos: int,
     rag_queries: int,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    alertas_guardrail: list[dict] | None = None,
 ) -> dict:
     ended_at = datetime.now(timezone.utc)
+    duration_s = round((ended_at - started_at).total_seconds(), 1)
     return {
         "call_id": call_id,
         "started_at": started_at.isoformat(),
         "ended_at": ended_at.isoformat(),
-        "duration_s": round((ended_at - started_at).total_seconds(), 1),
+        "duration_s": duration_s,
         "paciente": paciente,
         "procedimiento": procedimiento,
         "dia_postop": dia_postop,
@@ -184,6 +209,15 @@ def build_summary(
         "transcripcion": transcripcion,
         "turnos": turnos,
         "rag_queries": rag_queries,
+        # §5 de la rúbrica exige tokens por turno Y POR LLAMADA, más el costo
+        # estimado por llamada — que además es criterio de desempate.
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "costo": costo_llamada(modelo, input_tokens, output_tokens, duration_s),
+        # Frases del agente que el guardrail de salida marcó como posible
+        # alucinación clínica. Que quede en el registro es el punto: demuestra
+        # que el sistema las detecta, en vez de que las detecte el jurado.
+        "alertas_guardrail": alertas_guardrail or [],
     }
 
 

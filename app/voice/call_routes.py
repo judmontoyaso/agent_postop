@@ -38,16 +38,30 @@ from app.agent.tools import execute_tool
 from app.metrics import track_turn
 from app.calls import build_summary, save_summary
 from app.tokens import CallTokenAccounting
+from app.guardrails import revisar_salida, MENSAJE_CORRECCION
+from app.notify import avisar_en_segundo_plano
 from app.voice.deepgram_agent import SYSTEM_PROMPT, APERTURA_SIN_PACIENTE
 from app.agent.tools import TOOLS_SCHEMA
 from app.config import GROQ_MODEL, GEMINI_MODEL, THINK_PROVIDER
-from app.patients import get_procedure, build_context_prompt, build_greeting, DIAS_POSTOP
+from app.patients import (
+    get_procedure,
+    build_context_prompt,
+    build_greeting,
+    build_memory_prompt,
+    build_reconnect_line,
+    DIAS_POSTOP,
+)
 
 logger = logging.getLogger("voice.call_routes")
 router = APIRouter()
 
 CONNECTION_ERRORS = (ConnectionClosed, ConnectionResetError, OSError)
-MAX_RECONNECTS = 5
+# Alto a propósito: con dos tiers gratuitos ajustados, una llamada larga rebota
+# varias veces entre proveedores (se vieron 3 saltos en 2 minutos). Con 5, una
+# conversación de diez minutos con el jurado se quedaría sin reintentos a
+# mitad. Cada reintento ya no es ciego: espera lo que el proveedor pide y
+# arranca con la memoria de la llamada, así que gastarlos es barato.
+MAX_RECONNECTS = 12
 
 # Groq dice en el propio cuerpo del 429 cuánto falta para que se libere la
 # ventana ("Please try again in 355ms"). Casi siempre es menos de un segundo:
@@ -59,6 +73,12 @@ MAX_RECONNECTS = 5
 _RETRY_AFTER_RE = re.compile(r"(?:try again|retry) in\s+([\d.]+)\s*(ms|s)\b", re.IGNORECASE)
 RATE_LIMIT_FALLBACK_WAIT = 3.0
 RATE_LIMIT_MAX_WAIT = 15.0
+
+# Silencios del paciente. 12 s es largo para una conversación pero corto para
+# alguien mayor o dolorido que tarda en responder: preguntar antes molesta más
+# de lo que ayuda. A los 45 s se asume que no hay nadie al otro lado.
+SILENCIO_RECORDATORIO_S = 12
+SILENCIO_CIERRE_S = 45
 
 
 def _parse_retry_after(description: str) -> float:
@@ -151,6 +171,14 @@ async def call_socket(client_ws: WebSocket):
     rag_queries_total = 0
     turno_input_tokens = 0
     turno_output_tokens = 0
+    alertas_guardrail: list[dict] = []
+
+    # Estado para vigilar los silencios (rúbrica, 15 pts: "qué hace tu solución
+    # durante los silencios"). `agente_hablando` evita confundir el silencio del
+    # paciente con el rato en que simplemente está escuchando al agente.
+    ultimo_habla_usuario = time.monotonic()
+    agente_hablando = False
+    recordatorio_enviado = False
     # Failover entre proveedores permitidos por G3. Groq limita por TOKENS por
     # minuto y Gemini por PETICIONES por minuto: son cuotas independientes, así
     # que cuando una se agota la otra casi nunca lo está. Antes, agotar la única
@@ -158,8 +186,22 @@ async def call_socket(client_ws: WebSocket):
     # DESPUÉS de que el agente decidiera "rojo" y ANTES de que se lo dijera al
     # paciente, que es la peor forma posible de fallar en este dominio.
     proveedores = available_providers()
-    proveedor_idx = 0
     proveedor_actual = proveedores[0] if proveedores else THINK_PROVIDER
+
+    # Cuándo vuelve a estar disponible cada proveedor, según el retry-after que
+    # él mismo reportó al agotarse. Sin esto el failover alternaba a ciegas y
+    # volvía a un proveedor que seguía en enfriamiento — el patrón
+    # groq→google→groq→google que se vio en llamadas reales, gastando un
+    # reintento y unos segundos de silencio en cada rebote inútil.
+    listo_desde: dict[str, float] = {p: 0.0 for p in proveedores}
+
+    def elegir_proveedor(excluir: str) -> tuple[str, float]:
+        """Devuelve (proveedor, segundos a esperar). Prefiere el que ya esté
+        libre; si ninguno lo está, el que se libere antes."""
+        ahora = time.monotonic()
+        candidatos = [p for p in proveedores if p != excluir] or proveedores
+        mejor = min(candidatos, key=lambda p: listo_desde.get(p, 0.0))
+        return mejor, max(0.0, listo_desde.get(mejor, 0.0) - ahora)
 
     def modelo_de(prov: str) -> str:
         return GEMINI_MODEL if prov == "google" else GROQ_MODEL
@@ -261,6 +303,47 @@ async def call_socket(client_ws: WebSocket):
         finally:
             logger.info(f"[{call_id}] chunks de audio leídos del browser: {chunks_read}")
 
+    async def vigilar_silencio(agent_ws):
+        """Qué hace el sistema cuando el paciente deja de hablar.
+
+        Sin esto la llamada se quedaba abierta en silencio indefinidamente: si
+        el paciente se aleja, se duerme o se descompensa, nadie se entera y la
+        sesión sigue viva sin decidir nada. Se le pregunta una vez y, si sigue
+        sin responder, se cierra ordenadamente — el prompt ya obliga a llamar a
+        `escalar_paciente` antes de despedirse."""
+        nonlocal recordatorio_enviado, cierre_por_silencio
+        try:
+            while True:
+                await asyncio.sleep(2)
+                if agente_hablando:
+                    continue
+                callado = time.monotonic() - ultimo_habla_usuario
+
+                if callado > SILENCIO_CIERRE_S:
+                    logger.warning(
+                        f"[{call_id}] {callado:.0f}s sin respuesta del paciente — cerrando"
+                    )
+                    await agent_ws.send(json.dumps({
+                        "type": "InjectAgentMessage",
+                        "content": ("Parece que se quedó sin línea. Voy a cerrar la llamada y "
+                                    "dejo registrado su seguimiento. Que se mejore."),
+                    }))
+                    await asyncio.sleep(6)  # que alcance a sonar antes de colgar
+                    # Marca para que el bucle principal NO lo confunda con una
+                    # caída del proveedor y se ponga a reconectar: acá la
+                    # llamada termina a propósito.
+                    cierre_por_silencio = True
+                    return
+                if callado > SILENCIO_RECORDATORIO_S and not recordatorio_enviado:
+                    recordatorio_enviado = True
+                    logger.info(f"[{call_id}] {callado:.0f}s de silencio — preguntando si sigue ahí")
+                    await agent_ws.send(json.dumps({
+                        "type": "InjectAgentMessage",
+                        "content": "¿Sigue ahí? ¿Me escucha bien?",
+                    }))
+        except (asyncio.CancelledError, *CONNECTION_ERRORS):
+            raise
+
     async def forward_client_audio(agent_ws):
         chunks_sent = 0
         while True:
@@ -275,12 +358,14 @@ async def call_socket(client_ws: WebSocket):
         nonlocal last_patient_text, speech_end_ts, rate_limited, escalated
         nonlocal rate_limit_wait, nivel_final, nivel_llm, motivo_escalamiento
         nonlocal rag_queries_total, turno_input_tokens, turno_output_tokens
+        nonlocal ultimo_habla_usuario, agente_hablando, recordatorio_enviado
 
         async for message in agent_ws:
             if not client_connected():
                 break
 
             if isinstance(message, bytes):
+                agente_hablando = True
                 try:
                     await client_ws.send_bytes(message)
                 except (WebSocketDisconnect, RuntimeError):
@@ -330,6 +415,36 @@ async def call_socket(client_ws: WebSocket):
                     "content": event.get("content", ""),
                 })
                 tokens.add_history(event.get("content", ""))
+
+                if event.get("role") == "assistant":
+                    # Guardrail de SALIDA. Deepgram ya empezó a reproducir el
+                    # audio cuando llega este evento, así que no se puede
+                    # bloquear: se detecta, se hace que el agente se rectifique
+                    # en voz alta y queda anotado en el resumen de la llamada.
+                    hallazgos = revisar_salida(event.get("content", ""))
+                    if hallazgos:
+                        for h in hallazgos:
+                            logger.error(
+                                f"[{call_id}] GUARDRAIL — posible alucinación clínica "
+                                f"({h['tipo']}: {h['detalle']}) en: {h['frase']!r}"
+                            )
+                        alertas_guardrail.extend(hallazgos)
+                        try:
+                            await agent_ws.send(json.dumps({
+                                "type": "InjectAgentMessage",
+                                "content": MENSAJE_CORRECCION,
+                            }))
+                        except CONNECTION_ERRORS:
+                            pass
+                        if client_connected():
+                            try:
+                                await client_ws.send_text(json.dumps({
+                                    "type": "GuardrailAlert",
+                                    "hallazgos": hallazgos,
+                                }))
+                            except (WebSocketDisconnect, RuntimeError):
+                                pass
+
                 if event.get("role") == "assistant":
                     # El turno se cierra cuando el agente responde: es ahí donde
                     # se sabe qué costó de entrada y qué produjo de salida.
@@ -338,8 +453,12 @@ async def call_socket(client_ws: WebSocket):
             else:
                 logger.info(f"[{call_id}] evento Deepgram: {etype}")
 
-            if etype == "UserStartedSpeaking":
+            if etype == "AgentAudioDone":
+                agente_hablando = False
+            elif etype == "UserStartedSpeaking":
                 speech_end_ts = None
+                ultimo_habla_usuario = time.monotonic()
+                recordatorio_enviado = False
             elif etype == "ConversationText" and event.get("role") == "user":
                 # Marca real de "el usuario terminó de hablar" — Deepgram no emite
                 # EndOfThought/UtteranceEnd en la práctica (se confirmó en logs
@@ -348,11 +467,30 @@ async def call_socket(client_ws: WebSocket):
                 # que pide la rúbrica (fin de habla -> inicio de audio del agente).
                 last_patient_text = event.get("content", "")
                 speech_end_ts = time.monotonic()
+                ultimo_habla_usuario = time.monotonic()
+                recordatorio_enviado = False
                 if last_patient_text.strip():
                     sintomas.append(last_patient_text.strip())
             elif etype == "FunctionCallRequest":
                 invocations_this_turn += 1
                 logger.info(f"[{call_id}] FunctionCallRequest crudo: {event}")
+
+                # Relleno mientras se consulta la guía. El P95 de latencia
+                # medido es de 5 s, y el pico coincide con las consultas al RAG
+                # — justo cuando el caso es grave. Cinco segundos de silencio
+                # por teléfono hacen que el paciente crea que se cortó. Solo
+                # para el RAG: `escalar_paciente` resuelve al instante y
+                # meterle una frase ahí solo alargaría el turno.
+                if any((c.get("name") or c.get("function_name")) == "consultar_guia_clinica"
+                       for c in event.get("functions", [event])):
+                    try:
+                        await agent_ws.send(json.dumps({
+                            "type": "InjectAgentMessage",
+                            "content": "Déjeme revisar un momento la guía clínica.",
+                        }))
+                    except CONNECTION_ERRORS:
+                        pass
+
                 for call in event.get("functions", [event]):
                     try:
                         fname = call.get("function_name") or call.get("name")
@@ -415,11 +553,29 @@ async def call_socket(client_ws: WebSocket):
 
     reconnects = 0
     cierre_sin_excepcion = False
+    cierre_por_silencio = False
     while client_connected():
         try:
+            # Al reconectar se le devuelve la memoria de lo que ya llevaba: el
+            # proveedor nuevo no sabe nada de la sesión anterior y sin esto
+            # reinicia la conversación desde el saludo.
+            contexto_sesion = patient_context
+            saludo_sesion = greeting
+            if reconnects > 0:
+                ultima_del_agente = next(
+                    (t["content"] for t in reversed(transcripcion) if t["role"] == "assistant"), ""
+                )
+                memoria = build_memory_prompt(sintomas, ultima_del_agente, nivel_final)
+                if memoria:
+                    contexto_sesion = (patient_context or "") + memoria
+                # El saludo de reconexión repite lo último que le oyó al
+                # paciente: le demuestra que no perdió el hilo y le da la
+                # oportunidad de corregir una transcripción equivocada.
+                saludo_sesion = build_reconnect_line(sintomas) if sintomas else RECONNECT_LINE
+
             agent_ws = await open_agent_session(
-                greeting=RECONNECT_LINE if reconnects > 0 else greeting,
-                patient_context=patient_context,
+                greeting=saludo_sesion,
+                patient_context=contexto_sesion,
                 provider=proveedor_actual,
             )
         except Exception as e:
@@ -443,9 +599,11 @@ async def call_socket(client_ws: WebSocket):
             if dropped:
                 logger.info(f"[{call_id}] descartados {dropped} chunks de audio viejo antes de reanudar")
 
+        ultimo_habla_usuario = time.monotonic()
         session_tasks = (
             asyncio.create_task(forward_client_audio(agent_ws)),
             asyncio.create_task(forward_agent_events(agent_ws)),
+            asyncio.create_task(vigilar_silencio(agent_ws)),
         )
         try:
             # FIRST_COMPLETED, no FIRST_EXCEPTION: forward_client_audio ya no
@@ -471,6 +629,9 @@ async def call_socket(client_ws: WebSocket):
             if reader_task in done:
                 logger.info(f"[{call_id}] el browser colgó — cerrando llamada")
                 break
+            if cierre_por_silencio:
+                logger.info(f"[{call_id}] cerrada por silencio prolongado del paciente")
+                break
             if not client_connected():
                 break
 
@@ -492,20 +653,28 @@ async def call_socket(client_ws: WebSocket):
                 logger.error(f"[{call_id}] agotados los reintentos de reconexión, cerrando llamada")
                 break
             if rate_limited:
-                # Primero intentar CAMBIAR de proveedor, que recupera la llamada
-                # en el acto. Solo si no hay otro se espera, porque el límite es
-                # por minuto de reloj y reconectar al mismo pega contra el mismo
-                # techo agotado.
+                # Se anota cuándo vuelve a estar libre el que acaba de agotarse,
+                # y se elige el que antes esté disponible — no simplemente "el
+                # siguiente de la lista".
+                anterior = proveedor_actual
+                listo_desde[anterior] = time.monotonic() + rate_limit_wait
+
                 if len(proveedores) > 1:
-                    proveedor_idx = (proveedor_idx + 1) % len(proveedores)
-                    anterior, proveedor_actual = proveedor_actual, proveedores[proveedor_idx]
+                    proveedor_actual, espera = elegir_proveedor(excluir=anterior)
                     modelo = modelo_de(proveedor_actual)
                     if modelo not in modelos_usados:
                         modelos_usados.append(modelo)
-                    logger.warning(
-                        f"[{call_id}] cuota agotada en {anterior} — cambiando a "
-                        f"{proveedor_actual} ({modelo}) y siguiendo la llamada"
-                    )
+
+                    if espera > 0:
+                        logger.warning(
+                            f"[{call_id}] cuota agotada en {anterior}; {proveedor_actual} "
+                            f"tampoco está listo — esperando {espera:.1f}s"
+                        )
+                    else:
+                        logger.warning(
+                            f"[{call_id}] cuota agotada en {anterior} — cambiando a "
+                            f"{proveedor_actual} ({modelo}) y siguiendo la llamada"
+                        )
                     if client_connected():
                         try:
                             await client_ws.send_text(json.dumps({
@@ -513,11 +682,16 @@ async def call_socket(client_ws: WebSocket):
                                 "from": anterior,
                                 "to": proveedor_actual,
                                 "model": modelo,
-                                "description": f"Cuota agotada en {anterior}; "
-                                               f"la llamada sigue con {modelo}.",
+                                "wait_s": round(espera, 1),
+                                "description": (
+                                    f"Cuota agotada en {anterior}; la llamada sigue con {modelo}."
+                                    + (f" Reanudando en {espera:.0f}s." if espera > 0 else "")
+                                ),
                             }))
                         except (WebSocketDisconnect, RuntimeError):
                             pass
+                    if espera > 0:
+                        await asyncio.sleep(espera)
                     rate_limited = False
                     rate_limit_wait = RATE_LIMIT_FALLBACK_WAIT
                     continue
@@ -584,8 +758,14 @@ async def call_socket(client_ws: WebSocket):
         transcripcion=transcripcion,
         turnos=turn_index,
         rag_queries=rag_queries_total,
+        input_tokens=tokens.input_total,
+        output_tokens=tokens.output_total,
+        alertas_guardrail=alertas_guardrail,
     )
     save_summary(resumen)
+    # Aviso saliente a la clínica. Va después de guardar: si el webhook falla,
+    # el registro ya está a salvo.
+    avisar_en_segundo_plano(resumen)
 
     # Mandarlo antes de cerrar: el jurado cuelga y ve en pantalla qué quedó
     # registrado de la llamada, sin tener que ir a buscar a la base de datos.

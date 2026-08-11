@@ -279,6 +279,15 @@ function renderResumen(s) {
 
   html += `<dt>Sesión</dt><dd>${esc(s.duration_s)} s · ${esc(s.turnos)} turnos · ` +
           `${esc(s.rag_queries)} consultas al RAG · modelo ${esc(s.modelo)}</dd>`;
+
+  const c = s.costo || {};
+  if (c.total_usd !== undefined) {
+    html += `<dt>Consumo y costo estimado</dt><dd>` +
+            `${esc(s.input_tokens)} tokens entrada · ${esc(s.output_tokens)} salida<br>` +
+            `LLM ${c.llm_usd === null ? 's/tarifa' : '$' + esc(c.llm_usd)} + ` +
+            `voz $${esc(c.voz_usd)} = <b>$${esc(c.total_usd)} USD</b><br>` +
+            `<i>${esc(c.nota)}</i></dd>`;
+  }
   html += `</dl>`;
 
   resumenEl.innerHTML = html;
