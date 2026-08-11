@@ -1,3 +1,10 @@
+Metadata-Version: 2.4
+Name: agent-postop
+Version: 1.0.0
+Summary: Agente de voz para seguimiento postoperatorio en español colombiano — Tech Sphere Challenge 2026
+Requires-Python: <3.13,>=3.11
+Description-Content-Type: text/markdown
+
 # Agente de voz — Seguimiento postoperatorio (Tech Sphere Challenge 2026)
 
 Agente conversacional de voz en tiempo real que hace seguimiento
@@ -48,10 +55,6 @@ python -m venv .venv
 
 # 2. Dependencias  (~5 min: se baja torch)
 pip install -r requirements.txt
-
-# 2b. Instalar el proyecto. El código vive en src/, así que este paso es el que
-#     lo hace importable — sin él, `uvicorn app.main:app` no encuentra nada.
-pip install -e . --no-deps
 
 # 3. Configurar credenciales
 cp .env.example .env
@@ -250,14 +253,9 @@ agotado) y no puede alucinar un síntoma ni suavizar una decisión.
 
 ## Estructura
 
-Layout `src/`: el código no es importable por accidente desde el directorio de
-trabajo, lo que obliga a instalarlo y garantiza que se prueba lo mismo que se
-distribuye. `data/`, `dataset/`, `bin/` y `static/` quedan fuera del paquete
-porque son datos de despliegue, no código.
-
 ```
-agent_postop/
-└── src/app/
+techsphere-postop/
+├── app/
 │   ├── agent/
 │   │   ├── llm_client.py       # Cliente Groq (Llama 3.3 70B)
 │   │   ├── decision.py         # Triage verde/amarillo/rojo, hard triggers

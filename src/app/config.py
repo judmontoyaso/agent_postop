@@ -6,7 +6,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+# Raíz del repositorio, no del paquete. Con el layout src/ el paquete vive en
+# src/app/, así que hay tres niveles hasta la raíz — y de acá cuelgan data/,
+# dataset/, bin/ y static/, que NO son parte del paquete instalable.
+BASE_DIR = Path(__file__).resolve().parents[2]
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")

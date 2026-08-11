@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.call_routes_api import router as calls_router
+from app.config import BASE_DIR
 from app.metrics import summary
 from app.notify_routes import router as escalations_router
 from app.patient_routes import router as patient_router
@@ -44,5 +45,10 @@ async def no_cachear_interfaces(request, call_next):
     return response
 
 
-app.mount("/admin", StaticFiles(directory="static/admin", html=True), name="admin")
-app.mount("/call", StaticFiles(directory="static/call", html=True), name="call")
+# Rutas absolutas, no relativas al directorio de trabajo. Antes eran
+# "static/admin" y solo funcionaban si uvicorn se lanzaba desde la raíz del
+# repositorio; desde cualquier otro sitio el servidor arrancaba y las dos
+# interfaces devolvían 404 sin un error claro que lo explicara.
+STATIC_DIR = BASE_DIR / "static"
+app.mount("/admin", StaticFiles(directory=STATIC_DIR / "admin", html=True), name="admin")
+app.mount("/call", StaticFiles(directory=STATIC_DIR / "call", html=True), name="call")

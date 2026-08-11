@@ -20,12 +20,10 @@ completo, y cuántos verdes se elevarían de más (el costo del piso).
 
 Uso:  python scripts/evaluate_triage.py
 """
-import sys
 import warnings
 from collections import Counter
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 warnings.filterwarnings("ignore")
 
 from app.agent.decision import check_hard_triggers

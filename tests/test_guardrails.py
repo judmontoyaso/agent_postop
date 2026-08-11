@@ -5,11 +5,6 @@ procedimiento". Los casos de NO-marcar son frases textuales de llamadas reales
 registradas en los logs: un guardrail que marque esas sería peor que no tener
 guardrail, porque llenaría el registro de ruido y nadie lo miraría.
 """
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
 import pytest
 
 from app.guardrails import revisar_salida

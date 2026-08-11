@@ -4,11 +4,6 @@ paciente que el modelo minimizó se escala igual.
 Los casos vienen de fallos reales encontrados con `scripts/evaluate_triage.py`
 contra el dataset etiquetado del reto, no de casos inventados.
 """
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
 import pytest
 
 from app.agent.decision import EscalationLevel, check_hard_triggers, resolve_escalation

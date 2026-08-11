@@ -3,11 +3,6 @@
 Cubre regresiones concretas que ya ocurrieron en pruebas en vivo, no casos
 hipotéticos: cada test de aquí corresponde a algo que se rompió de verdad.
 """
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
 from app.patients import (
     build_context_prompt,
     build_greeting,

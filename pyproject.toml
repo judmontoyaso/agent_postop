@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "agent-postop"
 version = "1.0.0"
@@ -20,10 +24,20 @@ dev = [
     "ruff>=0.6",
 ]
 
+# Layout src/: el paquete vive en src/app/ y NO es importable por accidente
+# desde el directorio de trabajo. Eso obliga a instalarlo (`pip install -e .`)
+# y garantiza que se prueba lo mismo que se distribuye, en vez de una copia
+# que solo funciona si se ejecuta desde la raíz del repo.
+# data/, dataset/, bin/ y static/ quedan fuera del paquete a propósito: son
+# datos de despliegue, no código.
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-exclude = ["bin", "data", "dataset", ".venv"]
+exclude = ["bin", "data", "dataset", ".venv", "build"]
+src = ["src", "scripts", "tests"]
 
 [tool.ruff.lint]
 select = [
