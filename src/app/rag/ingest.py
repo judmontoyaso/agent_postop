@@ -20,7 +20,7 @@ import chromadb
 import pymupdf
 from chromadb.utils import embedding_functions
 
-from app.config import CHROMA_DB_PATH, EMBEDDING_MODEL, POPPLER_PATH, TESSERACT_CMD
+from app.config import CHROMA_DB_PATH, EMBEDDING_MODEL, TESSERACT_CMD
 
 logger = logging.getLogger("rag.ingest")
 
@@ -58,25 +58,39 @@ def _extract_text_pymupdf(path: Path) -> str:
     return text.strip()
 
 
+OCR_DPI = 200
+
+
 def _extract_text_ocr(path: Path) -> str:
-    """Fallback OCR para PDFs escaneados (sin capa de texto). Usa rutas
-    explícitas a poppler/tesseract (ver app/config.py) en vez de depender
-    del PATH — necesario porque el server ya corriendo no ve actualizaciones
-    de PATH hechas por un instalador después de que arrancó el proceso."""
+    """Fallback OCR para PDFs escaneados (sin capa de texto).
+
+    Rasteriza con PyMuPDF, que ya es dependencia del proyecto. Antes esto usaba
+    pdf2image, que delega en poppler — un binario nativo que había que
+    distribuir dentro del repositorio (47 MB en 480 archivos versionados) solo
+    para convertir PDF a imagen, algo que MuPDF hace de serie.
+
+    Queda tesseract como única dependencia de sistema, y solo para este camino:
+    el resto del corpus se indexa sin instalar nada.
+
+    La ruta a tesseract se pasa explícita (ver app/config.py) en vez de
+    depender del PATH, porque un servidor ya arrancado no ve las
+    actualizaciones de PATH que haga un instalador después."""
     import pytesseract
-    from pdf2image import convert_from_bytes
+    from PIL import Image
 
     if TESSERACT_CMD:
         pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
 
-    convert_kwargs = {"dpi": 200}
-    if POPPLER_PATH:
-        convert_kwargs["poppler_path"] = POPPLER_PATH
-
-    # convert_from_bytes (no ..._from_path): poppler es un .exe nativo al que
-    # se le pasaría la ruta larga tal cual y fallaría — ver _read_pdf_bytes.
-    images = convert_from_bytes(_read_pdf_bytes(path), **convert_kwargs)
-    return "\n".join(pytesseract.image_to_string(img, lang="spa+eng") for img in images).strip()
+    doc = pymupdf.open(stream=_read_pdf_bytes(path), filetype="pdf")
+    try:
+        textos = []
+        for page in doc:
+            pix = page.get_pixmap(dpi=OCR_DPI)
+            imagen = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            textos.append(pytesseract.image_to_string(imagen, lang="spa+eng"))
+    finally:
+        doc.close()
+    return "\n".join(textos).strip()
 
 
 def _chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:

@@ -93,13 +93,16 @@ Luego:
 
 El dataset trae un PDF escaneado sin capa de texto. **No hace falta para nada
 de lo anterior**: el ingest lo reporta como fallido y sigue con el resto. Para
-indexarlo también, instalar tesseract (poppler ya viene portable en `bin/`):
+indexarlo también, basta instalar tesseract — el rasterizado PDF→imagen lo hace
+PyMuPDF, que ya viene con las dependencias:
 
-- Windows: https://github.com/UB-Mannheim/tesseract/releases — por defecto en
-  `C:\Program Files\Tesseract-OCR\tesseract.exe`; si va a otra ruta, añadirla
-  a `TESSERACT_CMD` en `app/config.py`.
+- Windows: https://github.com/UB-Mannheim/tesseract/releases (ruta por defecto
+  detectada automáticamente)
 - Linux: `sudo apt install tesseract-ocr tesseract-ocr-spa`
 - Mac: `brew install tesseract tesseract-lang`
+
+Se detecta solo en las rutas habituales de los tres sistemas; si está en otra,
+añadirla a `_tesseract_candidates` en `src/app/config.py`.
 
 ## Contexto del paciente
 
@@ -252,8 +255,8 @@ agotado) y no puede alucinar un síntoma ni suavizar una decisión.
 
 Layout `src/`: el código no es importable por accidente desde el directorio de
 trabajo, lo que obliga a instalarlo y garantiza que se prueba lo mismo que se
-distribuye. `data/`, `dataset/`, `bin/` y `static/` quedan fuera del paquete
-porque son datos de despliegue, no código.
+distribuye. `data/`, `dataset/` y `static/` quedan fuera del paquete porque son
+datos de despliegue, no código.
 
 ```
 agent_postop/
@@ -315,13 +318,12 @@ agent_postop/
 
 RAG: **106/107 PDFs indexados sin instalar nada extra**. El 107 es el PDF
 escaneado sin capa de texto (la trampa del dataset) y necesita OCR: con
-tesseract instalado en el sistema sube a 107/107 (poppler ya viene portable en
-`bin/`). Sin tesseract el ingest lo reporta como fallido y sigue con el resto,
-no se cae.
+tesseract instalado en el sistema sube a 107/107. Sin tesseract el ingest lo
+reporta como fallido y sigue con el resto, no se cae.
 
 Nota de Windows: 3 PDFs de `textos/colorectal cancer/` tienen nombres tan
 largos que la ruta pasa el límite de 260 caracteres. `app/rag/ingest.py` los
-lee a bytes con el prefijo `\\?\` en vez de pasarle la ruta a MuPDF/poppler,
+lee a bytes con el prefijo `\\?\` en vez de pasarle la ruta a MuPDF,
 así que no hace falta habilitar rutas largas (que pide permisos de admin).
 
 ## Pendientes conocidos

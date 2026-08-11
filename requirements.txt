@@ -22,8 +22,9 @@ pymupdf==1.24.13
 openpyxl==3.1.5
 pandas==2.2.3
 
-# OCR fallback (PDF escaneado sin texto)
+# OCR fallback, solo para el PDF escaneado del dataset. El rasterizado PDF→imagen
+# lo hace PyMuPDF, que ya está arriba: por eso ya no hace falta pdf2image ni
+# distribuir poppler dentro del repositorio.
 pytesseract==0.3.13
-pdf2image==1.17.0
 
 python-multipart==0.0.12

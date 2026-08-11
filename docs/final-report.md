@@ -326,6 +326,10 @@ El número reportado tiene contraste contra el proveedor.
 - El que falta es el PDF escaneado sin capa de texto —la trampa del dataset—,
   que requiere OCR con tesseract instalado en el sistema. Con él sube a 107.
   El ingest lo reporta como fallido y continúa con el resto; no bloquea nada.
+- El rasterizado PDF→imagen del camino de OCR lo hace PyMuPDF. Antes lo hacía
+  poppler a través de `pdf2image`, lo que obligaba a distribuir 47 MB de
+  binarios en 480 archivos versionados dentro del repositorio para una tarea
+  que MuPDF —ya presente— resuelve de serie.
 - Tres PDFs de `colorectal cancer` tienen nombres tan largos que la ruta supera
   el límite de 260 caracteres de Windows. Se leen a bytes con el prefijo
   `\\?\` en vez de pasar la ruta a MuPDF o poppler, de modo que no hace falta

@@ -37,7 +37,12 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
-DEEPGRAM_STT_MODEL = os.getenv("DEEPGRAM_STT_MODEL", "nova-2")
+# nova-3 y no nova-2: nova-2 ya no aparece en la tabla de precios de Deepgram
+# (sigue existiendo como modelo legacy) y nova-3 es la generación vigente, con
+# mejor precisión. Se verificó que el Voice Agent API lo acepta en español
+# antes de cambiarlo. Importa más de lo que parece: una transcripción que
+# convierte "la herida" en "la árida" puede costar un escalamiento.
+DEEPGRAM_STT_MODEL = os.getenv("DEEPGRAM_STT_MODEL", "nova-3")
 DEEPGRAM_TTS_MODEL = os.getenv("DEEPGRAM_TTS_MODEL", "aura-2-celeste-es")
 
 CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", str(BASE_DIR / "data" / "chroma"))
@@ -53,17 +58,17 @@ DATASET_DIR = os.getenv("DATASET_DIR", str(BASE_DIR / "dataset"))
 ESCALATION_WEBHOOK_URL = os.getenv("ESCALATION_WEBHOOK_URL", "")
 API_PORT = int(os.getenv("API_PORT", "8000"))
 
-# OCR fallback (PDF escaneado sin texto) — ruta explícita en vez de depender
-# del PATH del sistema (un server ya corriendo no ve actualizaciones de PATH
-# hechas por un instalador después de que arrancó el proceso).
-_poppler_candidates = [
-    BASE_DIR / "bin" / "poppler" / "Library" / "bin",  # portable, sin admin
-]
-POPPLER_PATH = next((str(p) for p in _poppler_candidates if p.exists()), None)
-
+# OCR fallback (PDF escaneado sin texto). Única dependencia de sistema que
+# queda, y solo para ese camino: el rasterizado lo hace PyMuPDF, que ya viene
+# con el proyecto. Ruta explícita en vez de depender del PATH, porque un
+# servidor ya arrancado no ve las actualizaciones que haga un instalador
+# después de que el proceso empezó.
 _tesseract_candidates = [
-    BASE_DIR / "bin" / "tesseract" / "tesseract.exe",
-    Path("C:/Program Files/Tesseract-OCR/tesseract.exe"),  # instalación real del sistema
+    BASE_DIR / "bin" / "tesseract" / "tesseract.exe",  # copia portable opcional
+    Path("C:/Program Files/Tesseract-OCR/tesseract.exe"),  # instalación de Windows
+    Path("/usr/bin/tesseract"),  # Linux
+    Path("/opt/homebrew/bin/tesseract"),  # macOS (Apple Silicon)
+    Path("/usr/local/bin/tesseract"),  # macOS (Intel)
 ]
 TESSERACT_CMD = next((str(p) for p in _tesseract_candidates if p.exists()), None)
 
