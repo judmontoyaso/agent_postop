@@ -322,14 +322,35 @@ El número reportado tiene contraste contra el proveedor.
 
 ## 9. Base de conocimiento
 
-- **106 de 107 PDFs indexados**, 8 700 fragmentos, 5 patologías.
-- El que falta es el PDF escaneado sin capa de texto —la trampa del dataset—,
-  que requiere OCR con tesseract instalado en el sistema. Con él sube a 107.
-  El ingest lo reporta como fallido y continúa con el resto; no bloquea nada.
-- El rasterizado PDF→imagen del camino de OCR lo hace PyMuPDF. Antes lo hacía
-  poppler a través de `pdf2image`, lo que obligaba a distribuir 47 MB de
-  binarios en 480 archivos versionados dentro del repositorio para una tarea
-  que MuPDF —ya presente— resuelve de serie.
+- **107 de 107 PDFs indexados**, 5 patologías, incluido el PDF escaneado sin
+  capa de texto que trae el dataset como trampa.
+- Ese PDF se resuelve **sin ninguna dependencia de sistema**: PyMuPDF rasteriza
+  la página y EasyOCR la lee, ambos instalados por pip. Extrae 5 039 caracteres
+  utilizables en unos 30 segundos.
+
+  Es una simplificación deliberada de la primera versión, que necesitaba dos
+  binarios externos: poppler —47 MB en 480 archivos versionados dentro del
+  repositorio— solo para convertir PDF a imagen, algo que MuPDF ya hacía; y
+  tesseract, un instalador aparte en cada máquina, incluida la del jurado. El
+  proyecto se levanta ahora con `pip install` y nada más, que es exactamente lo
+  que mide la compuerta G2.
+
+### ¿Y hacerlo con un modelo de visión?
+
+Se evaluó usar Gemini Flash para transcribir la página escaneada. Es viable y
+más barato de lo que parece: la página son 6 baldosas de 768×768 ≈ 1 548 tokens
+de imagen, más ~1 362 de salida, lo que da **$0.0007 con Gemini 3.1 Flash Lite**
+(el 0.37 % de una sola llamada de voz). Aun si el corpus entero estuviera
+escaneado, serían $0.075 por indexar los 107 documentos.
+
+**Y no subiría el precio por llamada ni un céntimo**, porque el OCR ocurre en
+la ingesta —una vez— y el texto queda en ChromaDB. La llamada sigue costando
+$0.1880.
+
+Se descartó de todos modos por dos razones: añade una dependencia de red a un
+paso que hoy es local y determinista, y consume cuota del mismo tier gratuito
+que ya limita las llamadas. EasyOCR resuelve el único documento que lo necesita
+sin gastar nada y sin poder fallar por un 429.
 - Tres PDFs de `colorectal cancer` tienen nombres tan largos que la ruta supera
   el límite de 260 caracteres de Windows. Se leen a bytes con el prefijo
   `\\?\` en vez de pasar la ruta a MuPDF o poppler, de modo que no hace falta

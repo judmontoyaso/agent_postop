@@ -58,19 +58,9 @@ DATASET_DIR = os.getenv("DATASET_DIR", str(BASE_DIR / "dataset"))
 ESCALATION_WEBHOOK_URL = os.getenv("ESCALATION_WEBHOOK_URL", "")
 API_PORT = int(os.getenv("API_PORT", "8000"))
 
-# OCR fallback (PDF escaneado sin texto). Única dependencia de sistema que
-# queda, y solo para ese camino: el rasterizado lo hace PyMuPDF, que ya viene
-# con el proyecto. Ruta explícita en vez de depender del PATH, porque un
-# servidor ya arrancado no ve las actualizaciones que haga un instalador
-# después de que el proceso empezó.
-_tesseract_candidates = [
-    BASE_DIR / "bin" / "tesseract" / "tesseract.exe",  # copia portable opcional
-    Path("C:/Program Files/Tesseract-OCR/tesseract.exe"),  # instalación de Windows
-    Path("/usr/bin/tesseract"),  # Linux
-    Path("/opt/homebrew/bin/tesseract"),  # macOS (Apple Silicon)
-    Path("/usr/local/bin/tesseract"),  # macOS (Intel)
-]
-TESSERACT_CMD = next((str(p) for p in _tesseract_candidates if p.exists()), None)
+# El OCR de los PDFs escaneados no necesita configuración: rasteriza PyMuPDF y
+# reconoce EasyOCR, ambos instalados por pip. Ya no hay ninguna dependencia de
+# sistema que localizar (antes había dos: poppler y tesseract).
 
 for _p in (Path(CHROMA_DB_PATH).parent, Path(ADMIN_DB_PATH).parent, Path(METRICS_DB_PATH).parent):
     _p.mkdir(parents=True, exist_ok=True)

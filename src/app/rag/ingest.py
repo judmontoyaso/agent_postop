@@ -20,7 +20,7 @@ import chromadb
 import pymupdf
 from chromadb.utils import embedding_functions
 
-from app.config import CHROMA_DB_PATH, EMBEDDING_MODEL, TESSERACT_CMD
+from app.config import CHROMA_DB_PATH, EMBEDDING_MODEL
 
 logger = logging.getLogger("rag.ingest")
 
@@ -60,34 +60,55 @@ def _extract_text_pymupdf(path: Path) -> str:
 
 OCR_DPI = 200
 
+# El lector de EasyOCR carga ~17 s de modelos. Se construye una sola vez y solo
+# si de verdad hace falta: en un corpus de 107 PDFs solo uno está escaneado, y
+# pagar esa carga en cada arranque del servidor sería absurdo.
+_ocr_reader = None
+
+
+def _get_ocr_reader():
+    global _ocr_reader
+    if _ocr_reader is None:
+        import easyocr
+
+        logger.info("cargando modelos de OCR (solo la primera vez)...")
+        _ocr_reader = easyocr.Reader(["es"], gpu=False, verbose=False)
+    return _ocr_reader
+
 
 def _extract_text_ocr(path: Path) -> str:
-    """Fallback OCR para PDFs escaneados (sin capa de texto).
+    """OCR para PDFs escaneados (sin capa de texto).
 
-    Rasteriza con PyMuPDF, que ya es dependencia del proyecto. Antes esto usaba
-    pdf2image, que delega en poppler — un binario nativo que había que
-    distribuir dentro del repositorio (47 MB en 480 archivos versionados) solo
-    para convertir PDF a imagen, algo que MuPDF hace de serie.
+    Todo el camino es pip puro y sin dependencias de sistema, que es lo que
+    permite que el proyecto se levante con `pip install -r requirements.txt` y
+    nada más:
 
-    Queda tesseract como única dependencia de sistema, y solo para este camino:
-    el resto del corpus se indexa sin instalar nada.
+    - El rasterizado PDF→imagen lo hace PyMuPDF, ya presente. Antes lo hacía
+      poppler vía pdf2image, lo que obligaba a versionar 47 MB de binarios.
+    - El reconocimiento lo hace EasyOCR, que corre sobre el torch que ya
+      instala sentence-transformers. Antes era tesseract, un ejecutable que
+      había que instalar aparte en cada máquina — incluida la del jurado.
 
-    La ruta a tesseract se pasa explícita (ver app/config.py) en vez de
-    depender del PATH, porque un servidor ya arrancado no ve las
-    actualizaciones de PATH que haga un instalador después."""
-    import pytesseract
-    from PIL import Image
+    Se usa el modelo español: los documentos del corpus son clínicos en
+    castellano, y el reconocedor genérico multilingüe destroza los acentos.
+    """
+    import numpy as np
 
-    if TESSERACT_CMD:
-        pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
-
+    reader = _get_ocr_reader()
     doc = pymupdf.open(stream=_read_pdf_bytes(path), filetype="pdf")
     try:
         textos = []
         for page in doc:
             pix = page.get_pixmap(dpi=OCR_DPI)
-            imagen = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-            textos.append(pytesseract.image_to_string(imagen, lang="spa+eng"))
+            # EasyOCR trabaja sobre arrays de numpy; el pixmap de MuPDF ya trae
+            # los bytes crudos, así que se reinterpretan sin copiar la imagen.
+            arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+                pix.height, pix.width, pix.n
+            )
+            # paragraph=True agrupa las cajas de texto en bloques legibles; sin
+            # esto vuelven fragmentos sueltos que al trocear para el RAG pierden
+            # el hilo de la frase.
+            textos.append(" ".join(reader.readtext(arr, detail=0, paragraph=True)))
     finally:
         doc.close()
     return "\n".join(textos).strip()

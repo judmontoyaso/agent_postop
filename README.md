@@ -64,10 +64,11 @@ cp .env.example .env
 #    dataset/textos/**/*.pdf   (107 PDFs en 5 carpetas de patología)
 #    dataset/*.xlsx
 
-# 5. Indexar el conocimiento clínico  (~3 min la primera vez: baja el embedder)
+# 5. Indexar el conocimiento clínico
+#    (~5 min la primera vez: baja el embedder y los modelos de OCR)
 python scripts/ingest_dataset.py
-#    Salida esperada: "Indexados: 106/107". El que falta es el PDF escaneado
-#    sin capa de texto; ver "OCR opcional" más abajo.
+#    Salida esperada: "Indexados: 107/107", con 1 vía OCR — el PDF escaneado
+#    sin capa de texto que trae el dataset.
 
 # 6. Verificar setup
 python scripts/setup_check.py
@@ -89,20 +90,12 @@ Luego:
 - Interfaz de llamada: http://localhost:8000/call
 - Consola admin: http://localhost:8000/admin
 
-### OCR opcional — el PDF escaneado (106/107 → 107/107)
+### Sin dependencias de sistema
 
-El dataset trae un PDF escaneado sin capa de texto. **No hace falta para nada
-de lo anterior**: el ingest lo reporta como fallido y sigue con el resto. Para
-indexarlo también, basta instalar tesseract — el rasterizado PDF→imagen lo hace
-PyMuPDF, que ya viene con las dependencias:
-
-- Windows: https://github.com/UB-Mannheim/tesseract/releases (ruta por defecto
-  detectada automáticamente)
-- Linux: `sudo apt install tesseract-ocr tesseract-ocr-spa`
-- Mac: `brew install tesseract tesseract-lang`
-
-Se detecta solo en las rutas habituales de los tres sistemas; si está en otra,
-añadirla a `_tesseract_candidates` en `src/app/config.py`.
+El proyecto se levanta con `pip install` y nada más. No hay que instalar
+poppler, tesseract ni ningún otro binario: el rasterizado PDF→imagen lo hace
+PyMuPDF y el reconocimiento EasyOCR, ambos por pip. EasyOCR descarga ~100 MB de
+modelos la primera vez que se indexa; en runtime no se usa nunca.
 
 ## Contexto del paciente
 

@@ -22,9 +22,13 @@ pymupdf==1.24.13
 openpyxl==3.1.5
 pandas==2.2.3
 
-# OCR fallback, solo para el PDF escaneado del dataset. El rasterizado PDF→imagen
-# lo hace PyMuPDF, que ya está arriba: por eso ya no hace falta pdf2image ni
-# distribuir poppler dentro del repositorio.
-pytesseract==0.3.13
+# OCR, solo para el PDF escaneado del dataset (1 de 107). Corre sobre el torch
+# que ya instala sentence-transformers y el rasterizado lo hace PyMuPDF, así
+# que el proyecto no necesita NINGUNA dependencia de sistema: antes hacían
+# falta poppler (47 MB versionados en el repo) y tesseract (instalador aparte
+# en cada máquina, incluida la del jurado).
+# Descarga ~100 MB de modelos la primera vez que se indexa; en runtime no se
+# usa nunca.
+easyocr==1.7.2
 
 python-multipart==0.0.12
