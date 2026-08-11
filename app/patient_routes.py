@@ -1,7 +1,7 @@
 """app/patient_routes.py — Opciones de patología y día para el formulario de llamada."""
 from fastapi import APIRouter
 
-from app.patients import list_procedures, DIAS_POSTOP
+from app.patients import DIAS_POSTOP, list_procedures
 
 router = APIRouter(prefix="/api", tags=["call-setup"])
 

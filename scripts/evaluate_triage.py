@@ -28,7 +28,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 warnings.filterwarnings("ignore")
 
-from app.agent.decision import check_hard_triggers, resolve_escalation, EscalationLevel
+from app.agent.decision import check_hard_triggers
 from app.config import DATASET_DIR
 
 DATASET = "dataset_final.xlsx"

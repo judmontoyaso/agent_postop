@@ -16,8 +16,8 @@ import os
 import uuid
 from pathlib import Path
 
-import pymupdf
 import chromadb
+import pymupdf
 from chromadb.utils import embedding_functions
 
 from app.config import CHROMA_DB_PATH, EMBEDDING_MODEL, POPPLER_PATH, TESSERACT_CMD

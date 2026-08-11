@@ -72,6 +72,15 @@ python scripts/setup_check.py
 uvicorn app.main:app --port 8000
 ```
 
+### Comprobaciones opcionales (no hacen falta para levantar)
+
+```bash
+pip install ruff pytest
+pytest                             # 54 pruebas, ~1 s
+ruff check .                       # linter
+python scripts/evaluate_triage.py  # piso de seguridad vs. dataset etiquetado
+```
+
 Luego:
 - Interfaz de llamada: http://localhost:8000/call
 - Consola admin: http://localhost:8000/admin
@@ -257,6 +266,9 @@ techsphere-postop/
 │   ├── call_routes_api.py      # GET /api/calls — historial de resúmenes
 │   ├── tokens.py               # Estimación de tokens por turno + calibración vs Groq
 │   ├── metrics.py              # SQLite tracker de latencia/tokens/rag
+│   ├── guardrails.py           # Guardrail de salida: dosis/medicamentos inventados
+│   ├── notify.py               # Webhook saliente al escalar
+│   ├── notify_routes.py        # Buzón receptor (demo) de los avisos
 │   ├── config.py
 │   └── main.py                 # Entrypoint FastAPI
 ├── static/
@@ -269,8 +281,11 @@ techsphere-postop/
 │   └── final-report.md         # Plantilla del reporte final
 ├── scripts/
 │   ├── ingest_dataset.py
-│   └── setup_check.py
-└── tests/
+│   ├── setup_check.py
+│   └── evaluate_triage.py      # Piso de seguridad vs. dataset etiquetado
+├── tests/                      # 54 pruebas; los casos salen de fallos reales
+├── pyproject.toml              # Metadatos + configuración de ruff/pytest
+└── requirements.txt            # Dependencias de ejecución, con versiones fijas
 ```
 
 ## Gates eliminatorios — estado

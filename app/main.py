@@ -4,11 +4,12 @@ import logging
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.rag.admin_routes import router as admin_router
-from app.voice.call_routes import router as call_router
-from app.patient_routes import router as patient_router
 from app.call_routes_api import router as calls_router
 from app.metrics import summary
+from app.notify_routes import router as escalations_router
+from app.patient_routes import router as patient_router
+from app.rag.admin_routes import router as admin_router
+from app.voice.call_routes import router as call_router
 
 logging.basicConfig(level=logging.INFO)
 
@@ -18,6 +19,7 @@ app.include_router(admin_router)
 app.include_router(call_router)
 app.include_router(patient_router)
 app.include_router(calls_router)
+app.include_router(escalations_router)
 
 
 @app.get("/api/metrics/summary")

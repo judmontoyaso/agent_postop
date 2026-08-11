@@ -71,9 +71,17 @@ async def avisar_escalamiento(resumen: dict) -> None:
         )
 
 
+# Referencias fuertes a las tareas en vuelo. asyncio solo guarda una referencia
+# débil: sin esto el recolector de basura puede llevarse el aviso a mitad de
+# envío y el escalamiento no llega a la clínica sin dejar rastro del fallo.
+_tareas_en_vuelo: set[asyncio.Task] = set()
+
+
 def avisar_en_segundo_plano(resumen: dict) -> None:
     """Dispara sin bloquear el cierre de la llamada."""
     try:
-        asyncio.create_task(avisar_escalamiento(resumen))
+        tarea = asyncio.create_task(avisar_escalamiento(resumen))
     except RuntimeError:
-        pass  # sin loop en marcha (p. ej. desde un script) — no es crítico
+        return  # sin loop en marcha (p. ej. desde un script) — no es crítico
+    _tareas_en_vuelo.add(tarea)
+    tarea.add_done_callback(_tareas_en_vuelo.discard)

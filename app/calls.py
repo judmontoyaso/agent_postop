@@ -26,7 +26,7 @@ PROXIMOS_PASOS): son protocolo, no criterio del modelo.
 import json
 import logging
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from app.config import METRICS_DB_PATH
@@ -186,7 +186,7 @@ def build_summary(
     output_tokens: int = 0,
     alertas_guardrail: list[dict] | None = None,
 ) -> dict:
-    ended_at = datetime.now(timezone.utc)
+    ended_at = datetime.now(UTC)
     duration_s = round((ended_at - started_at).total_seconds(), 1)
     return {
         "call_id": call_id,

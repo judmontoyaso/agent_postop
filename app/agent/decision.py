@@ -66,7 +66,10 @@ HARD_TRIGGERS: list[tuple[str, bool]] = [
 
     # Neurológico / movilidad — señal de complicación grave
     (r"no puedo mover|no puedo levantarme|no me responde (la|el)\s\w+", False),
-    (r"(la pierna|el brazo|el pie|la mano)\s\w{0,12}\s?no (responde|me responde)", False),
+    # Hasta 3 palabras de por medio: en el dataset la frase real es "siento la
+    # pierna como que no responde", y un patrón que solo tolere una palabra
+    # entre el miembro y la negación la deja pasar.
+    (r"(la pierna|el brazo|el pie|la mano)(\s+\w+){0,3}\s+no\s+(me\s+)?responde", False),
     (r"no siento (la|el)\s\w+", False),  # pérdida de sensibilidad, NO "no siento dolor"
 ]
 

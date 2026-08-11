@@ -4,6 +4,7 @@
 lista cerrada (stack-tecnico.md) — G3 descalifica.
 """
 import logging
+
 from groq import Groq
 
 from app.config import GROQ_API_KEY, GROQ_MODEL

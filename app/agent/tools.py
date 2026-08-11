@@ -5,8 +5,8 @@ cuándo usarlas dentro del flujo de conversación de voz.
 """
 import logging
 
+from app.agent.decision import resolve_escalation
 from app.rag.query import query_knowledge_base
-from app.agent.decision import resolve_escalation, EscalationLevel
 
 TOOLS_SCHEMA = [
     {

@@ -5,8 +5,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.rag.ingest import ingest_directory
 from app.config import DATASET_DIR
+from app.rag.ingest import ingest_directory
 
 
 def main():

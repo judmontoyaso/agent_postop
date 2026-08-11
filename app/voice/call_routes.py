@@ -22,34 +22,33 @@ import logging
 import re
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 from websockets.exceptions import ConnectionClosed
 
-from app.voice.deepgram_agent import (
-    open_agent_session,
-    available_providers,
-    GREETING,
-    RECONNECT_LINE,
-)
-from app.agent.tools import execute_tool
-from app.metrics import track_turn
+from app.agent.tools import TOOLS_SCHEMA, execute_tool
 from app.calls import build_summary, save_summary
-from app.tokens import CallTokenAccounting
-from app.guardrails import revisar_salida, MENSAJE_CORRECCION
+from app.config import GEMINI_MODEL, GROQ_MODEL, THINK_PROVIDER
+from app.guardrails import MENSAJE_CORRECCION, revisar_salida
+from app.metrics import track_turn
 from app.notify import avisar_en_segundo_plano
-from app.voice.deepgram_agent import SYSTEM_PROMPT, APERTURA_SIN_PACIENTE
-from app.agent.tools import TOOLS_SCHEMA
-from app.config import GROQ_MODEL, GEMINI_MODEL, THINK_PROVIDER
 from app.patients import (
-    get_procedure,
+    DIAS_POSTOP,
     build_context_prompt,
     build_greeting,
     build_memory_prompt,
     build_reconnect_line,
-    DIAS_POSTOP,
+    get_procedure,
+)
+from app.tokens import CallTokenAccounting
+from app.voice.deepgram_agent import (
+    APERTURA_SIN_PACIENTE,
+    RECONNECT_LINE,
+    SYSTEM_PROMPT,
+    available_providers,
+    open_agent_session,
 )
 
 logger = logging.getLogger("voice.call_routes")
@@ -161,7 +160,7 @@ async def call_socket(client_ws: WebSocket):
     # Material del resumen final (criterio de 20 pts de la rúbrica). Se acumula
     # durante toda la llamada, incluidas las reconexiones: el paciente no tiene
     # por qué perder su historia porque a Groq se le acabó la cuota un segundo.
-    started_at = datetime.now(timezone.utc)
+    started_at = datetime.now(UTC)
     sintomas: list[str] = []       # lo que reportó el paciente, textual
     referencias: list[dict] = []   # documentos del RAG que sustentaron respuestas
     transcripcion: list[dict] = []
@@ -728,7 +727,7 @@ async def call_socket(client_ws: WebSocket):
             # bloqueado acá y el resumen de la llamada no se generaba jamás.
             try:
                 await asyncio.wait_for(agent_ws.close(), timeout=3)
-            except (asyncio.TimeoutError, *CONNECTION_ERRORS):
+            except (TimeoutError, *CONNECTION_ERRORS):
                 logger.warning(f"[{call_id}] la sesión Deepgram no cerró limpio — se abandona")
 
     reader_task.cancel()

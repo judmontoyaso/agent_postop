@@ -6,7 +6,7 @@ camino crítico de la conversación.
 """
 from fastapi import APIRouter, HTTPException
 
-from app.calls import list_summaries, get_summary
+from app.calls import get_summary, list_summaries
 
 router = APIRouter(prefix="/api/calls", tags=["calls"])
 

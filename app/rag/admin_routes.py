@@ -9,9 +9,9 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 
-from app.rag.ingest import ingest_pdf, delete_document, list_documents, new_source_id
+from app.rag.ingest import delete_document, ingest_pdf, list_documents, new_source_id
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 

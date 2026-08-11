@@ -26,19 +26,19 @@ import logging
 # versión pineada en requirements.txt.
 from websockets.asyncio.client import connect as ws_connect
 
+from app.agent.tools import TOOLS_SCHEMA
 from app.config import (
     DEEPGRAM_API_KEY,
     DEEPGRAM_STT_MODEL,
     DEEPGRAM_TTS_MODEL,
-    GROQ_API_KEY,
-    GROQ_MODEL,
-    THINK_PROVIDER,
     GEMINI_API_KEY,
     GEMINI_MODEL,
+    GROQ_API_KEY,
+    GROQ_MODEL,
     OPENAI_API_KEY,
     OPENAI_MODEL,
+    THINK_PROVIDER,
 )
-from app.agent.tools import TOOLS_SCHEMA
 
 logger = logging.getLogger("voice.deepgram_agent")
 

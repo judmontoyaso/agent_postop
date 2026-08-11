@@ -1,6 +1,7 @@
 """app/config.py — Carga de variables de entorno, centralizado."""
 import os
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 load_dotenv()

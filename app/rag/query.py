@@ -47,5 +47,8 @@ def query_knowledge_base(
 
     return [
         {"text": doc[:350], "source": meta.get("source"), "relevance": 1 - dist}
-        for doc, meta, dist in zip(docs, metas, distances)
+        # strict=False a propósito: si ChromaDB devolviera las tres listas
+        # descuadradas, cortar por la más corta es preferible a lanzar una
+        # excepción en mitad de una llamada de voz por un resultado de menos.
+        for doc, meta, dist in zip(docs, metas, distances, strict=False)
     ]

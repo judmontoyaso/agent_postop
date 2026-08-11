@@ -1,0 +1,61 @@
+[project]
+name = "agent-postop"
+version = "1.0.0"
+description = "Agente de voz para seguimiento postoperatorio en español colombiano — Tech Sphere Challenge 2026"
+# 3.11 es el piso real: el código usa `datetime.UTC`, que no existe antes.
+# El techo es 3.12 porque los pines de torch y chromadb todavía no traen
+# ruedas para 3.13 — instalarlo ahí obliga a compilar y rompe el gate G2.
+requires-python = ">=3.11,<3.13"
+readme = "README.md"
+
+# Las dependencias de ejecución viven en requirements.txt y NO se duplican acá.
+# Es deliberado: el README manda al jurado a `pip install -r requirements.txt`
+# con versiones fijas, y mantener dos listas de verdad es la forma más rápida
+# de que se desincronicen y falle el gate G2 (levantar en ≤15 min).
+# Este archivo centraliza metadatos y configuración de herramientas.
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = ["bin", "data", "dataset", ".venv"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes — variables sin usar, imports muertos
+    "I",    # isort — orden de imports
+    "UP",   # pyupgrade — sintaxis moderna
+    "B",    # bugbear — errores sutiles reales
+    "SIM",  # simplify
+    "RUF",  # reglas propias de ruff
+]
+ignore = [
+    "E501",  # longitud de línea: los comentarios explican decisiones clínicas
+             # y partirlos a 100 columnas los vuelve ilegibles
+    "B008",  # llamadas en argumentos por defecto: es el idioma de FastAPI
+             # (Depends(), File(...)) y marcarlo sería ruido
+    "SIM105", # sugiere contextlib.suppress en vez de try/except/pass. Acá cada
+              # uno de esos bloques lleva un comentario explicando POR QUÉ se
+              # ignora ese error concreto (socket ya cerrado, close frame ya
+              # enviado); suppress los volvería una línea sin sitio natural
+              # para esa explicación, que es lo que hace mantenible el módulo
+              # de voz.
+    "UP042",  # StrEnum en vez de (str, Enum): equivalente para nuestro uso y
+              # el cambio no aporta nada al lector.
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Los scripts son de un solo uso y se leen de arriba abajo: imports tras el
+# sys.path.insert son necesarios para que encuentren el paquete `app`.
+"scripts/*.py" = ["E402"]
+"tests/*.py" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

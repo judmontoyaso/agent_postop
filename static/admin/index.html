@@ -2,63 +2,318 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<title>Admin — Base de conocimiento clínico</title>
+<title>Consola clínica — Seguimiento postoperatorio</title>
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 700px; margin: 2rem auto; padding: 0 1rem; }
-  table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
-  td, th { border-bottom: 1px solid #ddd; padding: 0.5rem; text-align: left; }
-  button { cursor: pointer; }
-  #status { color: #666; font-size: 0.9rem; }
+  :root { color-scheme: dark; }
+  body {
+    font-family: system-ui, sans-serif; max-width: 1180px; margin: 1.5rem auto;
+    padding: 0 1.25rem; background: #0b0d12; color: #e8e8ea;
+  }
+  h1 { font-size: 1.15rem; font-weight: 500; color: #9a9aa5; margin-bottom: 1rem; }
+
+  nav { display: flex; gap: 0.4rem; margin-bottom: 1.25rem; border-bottom: 1px solid #1f232d; }
+  nav button {
+    background: none; border: none; border-bottom: 2px solid transparent; color: #7d7d88;
+    padding: 0.6rem 0.9rem; font-size: 0.9rem; font-family: inherit; cursor: pointer;
+  }
+  nav button.activo { color: #e8e8ea; border-bottom-color: #4c6fff; }
+
+  .panel { background: #14161c; border: 1px solid #1f232d; border-radius: 10px; padding: 1.1rem; }
+  .panel + .panel { margin-top: 1rem; }
+  h2 { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.07em;
+       color: #7d7d88; margin: 0 0 0.9rem; font-weight: 600; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  td, th { border-bottom: 1px solid #1f232d; padding: 0.5rem 0.6rem; text-align: left;
+           vertical-align: top; }
+  th { color: #7d7d88; font-weight: 500; font-size: 0.72rem; text-transform: uppercase;
+       letter-spacing: 0.05em; }
+  tr.clic { cursor: pointer; }
+  tr.clic:hover td { background: #1a1d25; }
+
+  button.accion {
+    cursor: pointer; border: none; border-radius: 6px; padding: 0.4rem 0.8rem;
+    background: #4c6fff; color: white; font-size: 0.85rem; font-family: inherit;
+  }
+  button.borrar { background: #3a1414; color: #ff9d9d; }
+  input[type=file] { font-size: 0.85rem; color: #9a9aa5; }
+
+  .nivel { display: inline-block; padding: 0.1rem 0.55rem; border-radius: 999px;
+           font-weight: 600; font-size: 0.75rem; white-space: nowrap; }
+  .nivel-verde    { background: #14351f; color: #7ee2a8; }
+  .nivel-amarillo { background: #3a3014; color: #ffd89d; }
+  .nivel-rojo     { background: #3a1414; color: #ff9d9d; }
+  .nivel-ninguno  { background: #2a1a1a; color: #d08a8a; }
+
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.8rem; }
+  .kpi { background: #0b0d12; border: 1px solid #1f232d; border-radius: 8px; padding: 0.8rem; }
+  .kpi .n { font-size: 1.45rem; font-weight: 600; }
+  .kpi .t { font-size: 0.7rem; color: #7d7d88; text-transform: uppercase;
+            letter-spacing: 0.05em; margin-top: 0.15rem; }
+  .kpi.alerta .n { color: #ff9d9d; }
+
+  #detalle { display: none; }
+  #detalle dt { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em;
+                color: #7d7d88; margin-top: 0.8rem; }
+  #detalle dd { margin: 0.15rem 0 0; font-size: 0.85rem; line-height: 1.5; }
+  #detalle ul { margin: 0.2rem 0 0; padding-left: 1.1rem; font-size: 0.85rem; }
+  .vacio { color: #5a5a63; font-size: 0.85rem; }
+  #status { color: #9a9aa5; font-size: 0.85rem; min-height: 1.2em; }
+  .aviso { background: #3a1414; color: #ff9d9d; border-radius: 6px;
+           padding: 0.5rem 0.7rem; font-size: 0.82rem; margin-top: 0.5rem; }
 </style>
 </head>
 <body>
-  <h1>Consola admin — documentos clínicos</h1>
-  <input type="file" id="fileInput" accept="application/pdf">
-  <button id="uploadBtn">Subir PDF</button>
-  <p id="status"></p>
-  <table id="docsTable">
-    <thead><tr><th>Archivo</th><th>Chunks</th><th>ID</th><th></th></tr></thead>
-    <tbody></tbody>
-  </table>
+  <h1>Consola clínica — seguimiento postoperatorio</h1>
+
+  <nav>
+    <button id="tabLlamadas" class="activo">Llamadas</button>
+    <button id="tabDocs">Base de conocimiento</button>
+  </nav>
+
+  <section id="vistaLlamadas">
+    <div class="panel">
+      <h2>Resumen operativo</h2>
+      <div class="kpis" id="kpis"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Llamadas registradas</h2>
+      <table id="tablaLlamadas">
+        <thead><tr>
+          <th>Paciente</th><th>Procedimiento</th><th>Día</th><th>Decisión</th>
+          <th>Duración</th><th>RAG</th><th>Costo</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="panel">
+      <h2>Avisos enviados a la clínica</h2>
+      <table id="tablaAvisos">
+        <thead><tr><th>Recibido</th><th>Paciente</th><th>Nivel</th><th>Motivo</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="panel" id="detalle"></div>
+  </section>
+
+  <section id="vistaDocs" style="display:none">
+    <div class="panel">
+      <h2>Subir documento clínico</h2>
+      <input type="file" id="fileInput" accept="application/pdf">
+      <button class="accion" id="uploadBtn">Subir PDF</button>
+      <p id="status"></p>
+    </div>
+    <div class="panel">
+      <h2>Documentos indexados</h2>
+      <table id="docsTable">
+        <thead><tr><th>Archivo</th><th>Chunks</th><th>ID</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
 
 <script>
-const statusEl = document.getElementById('status');
-const tbody = document.querySelector('#docsTable tbody');
+const $ = (id) => document.getElementById(id);
 
-async function loadDocs() {
-  const res = await fetch('/api/admin/documents');
-  const data = await res.json();
-  tbody.innerHTML = '';
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s == null ? '' : String(s);
+  return d.innerHTML;
+}
+function claseNivel(n) { return n ? `nivel-${n}` : 'nivel-ninguno'; }
+function textoNivel(n) { return n ? n.toUpperCase() : 'SIN DECISIÓN'; }
+
+// ---------- Llamadas ----------
+let llamadas = [];
+
+function pintarKpis(sinDecision) {
+  const total = llamadas.length;
+  const conteo = { rojo: 0, amarillo: 0, verde: 0 };
+  let alertas = 0, costo = 0;
+  for (const c of llamadas) {
+    if (conteo[c.nivel_final] !== undefined) conteo[c.nivel_final]++;
+    alertas += (c.alertas_guardrail || []).length;
+    costo += (c.costo && c.costo.total_usd) || 0;
+  }
+  const kpi = (n, t, alerta) =>
+    `<div class="kpi${alerta ? ' alerta' : ''}"><div class="n">${esc(n)}</div><div class="t">${esc(t)}</div></div>`;
+
+  $('kpis').innerHTML =
+    kpi(total, 'llamadas') +
+    kpi(conteo.rojo, 'escaladas a rojo') +
+    kpi(conteo.amarillo, 'amarillo') +
+    // Una llamada sin decisión no es un verde por defecto: es que el sistema
+    // no decidió nada. Se muestra en rojo a propósito.
+    kpi(sinDecision, 'sin decisión', sinDecision > 0) +
+    kpi(alertas, 'alertas guardrail', alertas > 0) +
+    kpi('$' + costo.toFixed(4), 'costo acumulado');
+}
+
+function pintarTablaLlamadas() {
+  const tb = document.querySelector('#tablaLlamadas tbody');
+  if (!llamadas.length) {
+    tb.innerHTML = '<tr><td colspan="7" class="vacio">Todavía no hay llamadas registradas.</td></tr>';
+    return;
+  }
+  tb.innerHTML = '';
+  for (const c of llamadas) {
+    const tr = document.createElement('tr');
+    tr.className = 'clic';
+    const costo = (c.costo && c.costo.total_usd !== undefined) ? '$' + c.costo.total_usd.toFixed(4) : '—';
+    tr.innerHTML =
+      `<td>${esc(c.paciente)}</td>` +
+      `<td>${esc(c.procedimiento)}</td>` +
+      `<td>${esc(c.dia_postop ?? '—')}</td>` +
+      `<td><span class="nivel ${claseNivel(c.nivel_final)}">${esc(textoNivel(c.nivel_final))}</span></td>` +
+      `<td>${esc(c.duration_s)} s</td>` +
+      `<td>${esc(c.rag_queries)}</td>` +
+      `<td>${costo}</td>`;
+    tr.onclick = () => pintarDetalle(c);
+    tb.appendChild(tr);
+  }
+}
+
+function pintarDetalle(c) {
+  const docs = [...new Set((c.referencias || []).map(r => r.documento))];
+  let h = `<h2>Detalle — ${esc(c.paciente)}</h2><dl>`;
+  h += `<dt>Decisión</dt><dd><span class="nivel ${claseNivel(c.nivel_final)}">${esc(textoNivel(c.nivel_final))}</span>`;
+  if (c.motivo) h += `<br>${esc(c.motivo)}`;
+  if (c.nivel_llm && c.nivel_llm !== c.nivel_final) {
+    h += `<br><i>El modelo propuso "${esc(c.nivel_llm)}"; un disparador de seguridad lo elevó.</i>`;
+  }
+  h += `</dd>`;
+  h += `<dt>Próximos pasos</dt><dd>${esc(c.proximos_pasos)}</dd>`;
+
+  if ((c.alertas_guardrail || []).length) {
+    h += `<dt>Alertas del guardrail de salida</dt><dd>`;
+    for (const a of c.alertas_guardrail) {
+      h += `<div class="aviso"><b>${esc(a.tipo)}</b> (${esc(a.detalle)}): “${esc(a.frase)}”</div>`;
+    }
+    h += `</dd>`;
+  }
+
+  h += `<dt>Reportado por el paciente (${(c.sintomas || []).length})</dt><dd>`;
+  h += (c.sintomas || []).length
+    ? `<ul>${c.sintomas.map(s => `<li>${esc(s)}</li>`).join('')}</ul>` : '<span class="vacio">Nada registrado.</span>';
+  h += `</dd>`;
+
+  h += `<dt>Referencias clínicas (${docs.length})</dt><dd>`;
+  h += docs.length ? `<ul>${docs.map(d => `<li>${esc(d)}</li>`).join('')}</ul>`
+                   : '<span class="vacio">No consultó la base de conocimiento.</span>';
+  h += `</dd>`;
+
+  const co = c.costo || {};
+  h += `<dt>Consumo</dt><dd>${esc(c.input_tokens)} tokens entrada · ${esc(c.output_tokens)} salida · ` +
+       `modelo ${esc(c.modelo)}<br>LLM $${esc(co.llm_usd ?? '—')} + voz $${esc(co.voz_usd ?? '—')} = ` +
+       `<b>$${esc(co.total_usd ?? '—')}</b></dd>`;
+
+  h += `<dt>Transcripción</dt><dd>`;
+  h += (c.transcripcion || []).length
+    ? `<ul>${c.transcripcion.map(t => `<li><b>${esc(t.role)}:</b> ${esc(t.content)}</li>`).join('')}</ul>`
+    : '<span class="vacio">Sin transcripción.</span>';
+  h += `</dd></dl>`;
+
+  $('detalle').innerHTML = h;
+  $('detalle').style.display = 'block';
+  $('detalle').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function cargarAvisos() {
+  const tb = document.querySelector('#tablaAvisos tbody');
+  try {
+    const data = await (await fetch('/api/escalations')).json();
+    const filas = data.escalations || [];
+    if (!filas.length) {
+      tb.innerHTML = '<tr><td colspan="4" class="vacio">Ningún aviso recibido todavía. ' +
+        'Requiere ESCALATION_WEBHOOK_URL configurado en .env.</td></tr>';
+      return;
+    }
+    tb.innerHTML = '';
+    for (const e of filas) {
+      const p = e.payload || {};
+      const tr = document.createElement('tr');
+      tr.innerHTML =
+        `<td>${esc((e.recibido_at || '').slice(11, 19))}</td>` +
+        `<td>${esc(p.paciente || '—')}</td>` +
+        `<td><span class="nivel ${claseNivel(e.nivel)}">${esc(textoNivel(e.nivel))}</span></td>` +
+        `<td>${esc(p.motivo || '—')}</td>`;
+      tb.appendChild(tr);
+    }
+  } catch {
+    tb.innerHTML = '<tr><td colspan="4" class="vacio">No se pudo consultar /api/escalations.</td></tr>';
+  }
+}
+
+async function cargarLlamadas() {
+  try {
+    const data = await (await fetch('/api/calls')).json();
+    llamadas = data.calls || [];
+    pintarKpis(data.sin_decision || 0);
+    pintarTablaLlamadas();
+  } catch {
+    $('kpis').innerHTML = '<span class="vacio">No se pudo consultar /api/calls.</span>';
+  }
+}
+
+// ---------- Documentos ----------
+async function cargarDocs() {
+  const tb = document.querySelector('#docsTable tbody');
+  const data = await (await fetch('/api/admin/documents')).json();
+  tb.innerHTML = '';
+  if (!data.documents.length) {
+    tb.innerHTML = '<tr><td colspan="4" class="vacio">Sin documentos indexados.</td></tr>';
+    return;
+  }
   for (const doc of data.documents) {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${doc.source}</td><td>${doc.chunks}</td><td>${doc.source_id}</td>
-      <td><button data-id="${doc.source_id}">Borrar</button></td>`;
-    tbody.appendChild(tr);
+    tr.innerHTML = `<td>${esc(doc.source)}</td><td>${esc(doc.chunks)}</td><td>${esc(doc.source_id)}</td>
+      <td><button class="accion borrar" data-id="${esc(doc.source_id)}">Borrar</button></td>`;
+    tb.appendChild(tr);
   }
-  tbody.querySelectorAll('button').forEach(btn => {
+  tb.querySelectorAll('button').forEach(btn => {
     btn.onclick = async () => {
       await fetch(`/api/admin/documents/${btn.dataset.id}`, { method: 'DELETE' });
-      statusEl.textContent = `Borrado ${btn.dataset.id} — el agente ya no lo usa.`;
-      loadDocs();
+      $('status').textContent = `Borrado ${btn.dataset.id} — el agente ya no lo usa.`;
+      cargarDocs();
     };
   });
 }
 
-document.getElementById('uploadBtn').onclick = async () => {
-  const file = document.getElementById('fileInput').files[0];
+$('uploadBtn').onclick = async () => {
+  const file = $('fileInput').files[0];
   if (!file) return;
-  statusEl.textContent = 'Subiendo e indexando...';
+  $('status').textContent = 'Subiendo e indexando...';
   const form = new FormData();
   form.append('file', file);
-  const res = await fetch('/api/admin/documents', { method: 'POST', body: form });
-  const data = await res.json();
-  statusEl.textContent = data.error
+  const data = await (await fetch('/api/admin/documents', { method: 'POST', body: form })).json();
+  $('status').textContent = data.error
     ? `Error: ${data.error}`
-    : `Indexado: ${data.file} (${data.chunks} chunks${data.used_ocr ? ', via OCR' : ''})`;
-  loadDocs();
+    : `Indexado: ${data.file} (${data.chunks} chunks${data.used_ocr ? ', vía OCR' : ''})`;
+  cargarDocs();
 };
 
-loadDocs();
+// ---------- Pestañas ----------
+function mostrar(cual) {
+  const esLlamadas = cual === 'llamadas';
+  $('vistaLlamadas').style.display = esLlamadas ? 'block' : 'none';
+  $('vistaDocs').style.display = esLlamadas ? 'none' : 'block';
+  $('tabLlamadas').classList.toggle('activo', esLlamadas);
+  $('tabDocs').classList.toggle('activo', !esLlamadas);
+  if (esLlamadas) { cargarLlamadas(); cargarAvisos(); } else cargarDocs();
+}
+$('tabLlamadas').onclick = () => mostrar('llamadas');
+$('tabDocs').onclick = () => mostrar('docs');
+
+mostrar('llamadas');
+// Refresco periódico: durante la evaluación el jurado tiene esta pantalla
+// abierta mientras se hace una llamada desde otra pestaña, y el resumen debe
+// aparecer solo al colgar, sin que nadie recargue nada.
+setInterval(() => {
+  if ($('vistaLlamadas').style.display !== 'none') { cargarLlamadas(); cargarAvisos(); }
+}, 5000);
 </script>
 </body>
 </html>
