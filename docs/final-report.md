@@ -254,13 +254,53 @@ Sobre una llamada real de 189 segundos con 10 turnos:
 | Concepto | USD |
 |---|---:|
 | LLM (Gemini Flash Lite, ~19 800 tokens entrada) | 0.0021 |
-| Voz (Deepgram, 3.15 min × $0.078/min) | 0.2457 |
-| **Total** | **0.2478** |
+| Voz (Deepgram Voice Agent API, 3.15 min × $0.059/min) | 0.1858 |
+| **Total** | **0.1880** |
 
-**La voz cuesta cien veces más que el razonamiento.** Reportar solo el LLM
-daría un número engañosamente bajo. Con Llama 70B en vez de Gemini Flash Lite
-la parte de LLM sube a $0.0145 — seis veces más— y el total apenas se mueve,
-porque está dominado por la síntesis de voz.
+**La voz es el 99 % del costo.** Reportar solo el LLM daría un número
+engañosamente bajo. Con Llama 70B en vez de Gemini Flash Lite la parte de LLM
+sube a $0.0145 —seis veces más— y el total apenas se mueve.
+
+La tarifa es la del tier **Custom - BYO LLM** ($0.059/min, Pay As You Go), que
+es el que corresponde: el razonamiento lo ponemos nosotros y de Deepgram solo
+usamos transcripción, síntesis y orquestación de turnos.
+
+**Se cobra por minuto de conexión del WebSocket, no por audio procesado.** El
+silencio cuesta exactamente lo mismo que el habla, y eso convierte decisiones
+de conversación en decisiones de costo:
+
+| Silencio | Costo |
+|---|---:|
+| P95 pensando (5 s) | $0.0049 |
+| Espera antes del "¿sigue ahí?" (12 s) | $0.0118 |
+| Cierre por silencio prolongado (45 s) | $0.0443 |
+
+Ese último cuesta veinte veces más que todo el razonamiento de la llamada.
+
+### La arquitectura de voz es la palanca de costo, no el modelo
+
+Desagregando —STT y TTS por separado en vez de la Voice Agent API— la misma
+llamada costaría:
+
+| Configuración | USD | vs. actual |
+|---|---:|---:|
+| Voice Agent API, Custom BYO LLM (actual) | 0.1858 | — |
+| Nova-3 + Aura-2 por separado | 0.0513 | 3.6× más barato |
+| Nova-3 + Aura-1 por separado | 0.0286 | 6.5× más barato |
+
+La diferencia viene de la unidad de cobro: el TTS suelto se paga **por
+carácter** ($0.030/1k en Aura-2, $0.015/1k en Aura-1), y como los turnos del
+agente son cortos por diseño, en toda la llamada apenas se sintetizan ~900
+caracteres. Con el bundle se pagan 3.15 minutos de reloj por unos 30 segundos
+de voz.
+
+No se desagregó porque lo que la Voice Agent API resuelve —detección de turnos,
+interrupciones, streaming bidireccional— es precisamente lo más difícil de un
+agente de voz, y reconstruirlo pondría en riesgo la compuerta G4. Es la
+optimización más clara que queda pendiente.
+
+Nota: el acento y el idioma de la voz **no** afectan al precio; lo que sí lo
+cambia es la generación del modelo (Aura-2 cuesta el doble que Aura-1).
 
 ### Sobre la exactitud de los tokens
 
@@ -360,6 +400,12 @@ no sobrevive a varias enfermeras consultando a la vez.
 **Integración con el HIS.** El webhook está y funciona, pero apunta a un buzón
 de demostración. Lo que falta no es código, es el contrato con un sistema
 hospitalario real.
+
+**Desagregar la voz.** Es la optimización de costo con más recorrido: 3.6× más
+barato con la misma calidad de síntesis, 6.5× bajando a Aura-1. A cambio hay
+que construir la detección de turnos y el manejo de interrupciones que hoy
+resuelve la Voice Agent API. A escala de una clínica —cientos de llamadas
+diarias— la diferencia deja de ser teórica.
 
 **Salir del tier gratuito.** Todo el trabajo de failover, enfriamiento por
 proveedor y memoria de reconexión existe para sobrevivir a unos límites que en

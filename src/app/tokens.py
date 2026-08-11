@@ -53,10 +53,20 @@ PRECIOS_USD_POR_MILLON = {
     "gemini-3-flash-preview": {"in": 0.30, "out": 2.50},
 }
 
-# Deepgram cobra la voz aparte del LLM, por minuto de audio. Sin esto el costo
-# por llamada saldría engañosamente bajo: en conversaciones cortas la voz pesa
-# más que el razonamiento.
-DEEPGRAM_USD_POR_MINUTO = 0.078
+# Deepgram cobra la voz aparte del LLM, por MINUTO DE CONEXIÓN del WebSocket
+# —no por audio procesado—, así que el silencio cuesta igual que el habla. Sin
+# esta línea el costo por llamada saldría engañosamente bajo: en conversaciones
+# cortas la voz pesa mucho más que el razonamiento.
+#
+# Tarifa Voice Agent API, Pay As You Go, tier "Custom - BYO LLM": es el que nos
+# corresponde porque el razonamiento lo ponemos nosotros (Groq/Gemini) y solo
+# usamos de Deepgram el STT, el TTS y la orquestación de turnos.
+# Referencia de los otros tiers, por si cambia la arquitectura:
+#   Standard (LLM de Deepgram)      $0.075/min
+#   Standard - BYO TTS              $0.065/min
+#   Custom - BYO LLM                $0.059/min  <- el nuestro
+#   Custom - BYO LLM + TTS          $0.050/min
+DEEPGRAM_USD_POR_MINUTO = 0.059
 
 
 def costo_llamada(modelo: str, input_tokens: int, output_tokens: int,
