@@ -10,3 +10,10 @@ dataset/textos/**/*.pdf
 .pytest_cache/
 node_modules/
 logs/
+
+# Metadatos de build generados por pip install -e .
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
