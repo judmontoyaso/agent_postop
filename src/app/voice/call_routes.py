@@ -79,6 +79,11 @@ RATE_LIMIT_MAX_WAIT = 15.0
 SILENCIO_RECORDATORIO_S = 12
 SILENCIO_CIERRE_S = 45
 
+# Tope de tiempo descartando el audio de un turno vetado por el guardrail.
+# Normalmente lo cierra el AgentAudioDone del propio turno; esto solo cubre el
+# caso de que ese evento no llegue, para no dejar al paciente mudo.
+VETO_MAX_S = 8
+
 
 def _parse_retry_after(description: str) -> float:
     """Segundos a esperar según el 429 de Groq. Cae al fallback si el mensaje
@@ -178,6 +183,17 @@ async def call_socket(client_ws: WebSocket):
     ultimo_habla_usuario = time.monotonic()
     agente_hablando = False
     recordatorio_enviado = False
+
+    # Compuerta de audio del guardrail de salida. El audio del agente pasa por
+    # este backend antes de llegar al navegador, así que se retiene hasta que
+    # el texto de ese mismo turno haya pasado la revisión. Medido contra
+    # Deepgram: solo 20 ms de voz preceden al texto, así que retenerlo no se
+    # nota — y a cambio una dosis inventada NUNCA llega al oído del paciente,
+    # ni siquiera si cuelga inmediatamente después.
+    audio_retenido: list[bytes] = []
+    turno_aprobado = False
+    turno_vetado = False
+    veto_desde = 0.0
     # Failover entre proveedores permitidos por G3. Groq limita por TOKENS por
     # minuto y Gemini por PETICIONES por minuto: son cuotas independientes, así
     # que cuando una se agota la otra casi nunca lo está. Antes, agotar la única
@@ -358,6 +374,7 @@ async def call_socket(client_ws: WebSocket):
         nonlocal rate_limit_wait, nivel_final, nivel_llm, motivo_escalamiento
         nonlocal rag_queries_total, turno_input_tokens, turno_output_tokens
         nonlocal ultimo_habla_usuario, agente_hablando, recordatorio_enviado
+        nonlocal turno_aprobado, turno_vetado, veto_desde
 
         async for message in agent_ws:
             if not client_connected():
@@ -365,6 +382,22 @@ async def call_socket(client_ws: WebSocket):
 
             if isinstance(message, bytes):
                 agente_hablando = True
+
+                if turno_vetado:
+                    # El texto de este turno no pasó el guardrail: su audio se
+                    # descarta entero. El paciente no lo oye nunca.
+                    if time.monotonic() - veto_desde > VETO_MAX_S:
+                        # Salvaguarda: si por lo que sea no llega el
+                        # AgentAudioDone que cierra el turno, no dejamos al
+                        # paciente en silencio indefinido.
+                        logger.warning(f"[{call_id}] veto de audio expirado — reanudando salida")
+                        turno_vetado = False
+                    continue
+
+                if not turno_aprobado:
+                    audio_retenido.append(message)
+                    continue
+
                 try:
                     await client_ws.send_bytes(message)
                 except (WebSocketDisconnect, RuntimeError):
@@ -416,18 +449,26 @@ async def call_socket(client_ws: WebSocket):
                 tokens.add_history(event.get("content", ""))
 
                 if event.get("role") == "assistant":
-                    # Guardrail de SALIDA. Deepgram ya empezó a reproducir el
-                    # audio cuando llega este evento, así que no se puede
-                    # bloquear: se detecta, se hace que el agente se rectifique
-                    # en voz alta y queda anotado en el resumen de la llamada.
+                    # Guardrail de SALIDA, con el audio de este turno retenido
+                    # esperando justo este momento. Si el texto no pasa, ese
+                    # audio se descarta sin reproducirse: el paciente no llega
+                    # a oír la dosis inventada ni aunque cuelgue en el acto.
                     hallazgos = revisar_salida(event.get("content", ""))
                     if hallazgos:
                         for h in hallazgos:
                             logger.error(
-                                f"[{call_id}] GUARDRAIL — posible alucinación clínica "
-                                f"({h['tipo']}: {h['detalle']}) en: {h['frase']!r}"
+                                f"[{call_id}] GUARDRAIL — BLOQUEADA posible alucinación "
+                                f"clínica ({h['tipo']}: {h['detalle']}) en: {h['frase']!r}"
                             )
                         alertas_guardrail.extend(hallazgos)
+                        descartados = len(audio_retenido)
+                        audio_retenido.clear()
+                        turno_vetado = True
+                        veto_desde = time.monotonic()
+                        logger.warning(
+                            f"[{call_id}] descartados {descartados} chunks de audio sin "
+                            f"reproducir — el agente dirá la corrección en su lugar"
+                        )
                         try:
                             await agent_ws.send(json.dumps({
                                 "type": "InjectAgentMessage",
@@ -440,9 +481,21 @@ async def call_socket(client_ws: WebSocket):
                                 await client_ws.send_text(json.dumps({
                                     "type": "GuardrailAlert",
                                     "hallazgos": hallazgos,
+                                    "bloqueado": True,
                                 }))
                             except (WebSocketDisconnect, RuntimeError):
                                 pass
+                    else:
+                        # Texto limpio: se libera el audio que estaba esperando.
+                        turno_aprobado = True
+                        for chunk in audio_retenido:
+                            if not client_connected():
+                                break
+                            try:
+                                await client_ws.send_bytes(chunk)
+                            except (WebSocketDisconnect, RuntimeError):
+                                break
+                        audio_retenido.clear()
 
                 if event.get("role") == "assistant":
                     # El turno se cierra cuando el agente responde: es ahí donde
@@ -454,6 +507,25 @@ async def call_socket(client_ws: WebSocket):
 
             if etype == "AgentAudioDone":
                 agente_hablando = False
+                # Fin del turno hablado: se reinicia la compuerta para el
+                # siguiente. Si quedara audio retenido sin veredicto (el texto
+                # nunca llegó), se libera: dejar mudo al paciente es peor que
+                # el riesgo que la compuerta cubre.
+                if audio_retenido and not turno_vetado:
+                    logger.warning(
+                        f"[{call_id}] {len(audio_retenido)} chunks quedaron sin texto que "
+                        f"revisar — se liberan para no cortar la conversación"
+                    )
+                    for chunk in audio_retenido:
+                        if not client_connected():
+                            break
+                        try:
+                            await client_ws.send_bytes(chunk)
+                        except (WebSocketDisconnect, RuntimeError):
+                            break
+                audio_retenido.clear()
+                turno_aprobado = False
+                turno_vetado = False
             elif etype == "UserStartedSpeaking":
                 speech_end_ts = None
                 ultimo_habla_usuario = time.monotonic()

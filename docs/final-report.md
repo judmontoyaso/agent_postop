@@ -194,13 +194,41 @@ mismo canal que una guía clínica.
 dosis, medicamentos y procedimientos inventados. 18 de 18 casos detectados, sin
 un solo falso positivo sobre frases textuales de llamadas reales.
 
-> **Un límite que conviene decir claro:** Deepgram empieza a reproducir el
-> audio antes de entregarnos la transcripción del agente — verificable en los
-> logs, los bytes llegan antes que el evento `ConversationText`. Para cuando se
-> puede leer lo que dijo, el paciente ya lo está oyendo. Así que el guardrail
-> de salida **detecta y corrige, no previene**: el agente se rectifica en voz
-> alta y el hallazgo queda en el resumen. Bloquear exigiría retener el audio
-> hasta tener el texto, metiendo latencia justo donde no sobra.
+**Y no solo lo detecta: impide que suene.** El audio del agente pasa por este
+backend antes de llegar al navegador, así que se retiene hasta que el texto de
+ese mismo turno haya pasado la revisión. Si no pasa, esos chunks se descartan
+sin reproducirse y el agente dice una corrección en su lugar.
+
+Esa decisión salió de medir, no de suponer. La primera versión solo detectaba y
+corregía *después*, lo que dejaba una carrera perdida de antemano: si el
+paciente colgaba justo tras oír la dosis inventada, no había turno siguiente
+donde rectificar. El daño ya estaba dicho.
+
+Se consideró el patrón habitual para esto —un proxy propio entre Deepgram y el
+LLM, apuntando `endpoint.url` al servidor de uno— y **se descartó por una razón
+concreta**: Deepgram es un servicio en la nube y ese endpoint tiene que ser
+alcanzable desde Internet. Con la aplicación corriendo en local, exigiría un
+túnel público que el jurado tendría que montar para levantar el proyecto —lo
+que rompe la compuerta G2— y expondría un endpoint público con las claves de
+Groq y Gemini dentro.
+
+La medición que abrió la alternativa: entre el primer byte de audio y el evento
+`ConversationText` solo hay **20 ms de voz sintetizada y 0 ms de reloj**
+(medido tres veces contra Deepgram). Retener el audio en el backend hasta
+validarlo cuesta esos 20 ms — imperceptible— y no necesita ninguna
+infraestructura nueva.
+
+Comportamiento verificado en los cuatro casos:
+
+| Situación | Chunks que oye el paciente |
+|---|---:|
+| Frase clínica correcta | todos |
+| Dosis inventada | 0, descartados |
+| Dosis inventada y el paciente **cuelga en el acto** | **0** |
+| El texto nunca llega (fallo del proveedor) | todos — se libera para no cortar la conversación |
+
+El último caso es deliberado: dejar al paciente en silencio es peor que el
+riesgo que la compuerta cubre, así que ante la duda falla hacia dejar hablar.
 
 ---
 
@@ -412,10 +440,6 @@ el piso de seguridad contra el dataset sin gastar una sola llamada de voz.
 seguridad cubre el 41.7 % de las conversaciones rojas y las que se le escapan
 son casi todas de pacientes que restan importancia a sus síntomas. El dataset
 trae 928 turnos de ese perfil etiquetados y permitiría medirlo de frente.
-
-**Guardrail de salida que prevenga, no solo que corrija.** Requiere retener el
-audio hasta validar el texto, o un modelo de validación en paralelo lo bastante
-rápido para no añadir latencia perceptible.
 
 **Persistencia real y control de acceso.** Postgres gestionado, cifrado en
 reposo, retención y autenticación en la consola. Hoy SQLite es la decisión

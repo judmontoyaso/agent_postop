@@ -168,14 +168,17 @@ etiquetado del reto con `scripts/evaluate_triage.py`.
 
 **De salida** (`app/guardrails.py`) — revisa lo que el agente dice buscando
 dosis, medicamentos y procedimientos inventados, que es lo que la rúbrica
-penaliza por ocurrencia. Cuando detecta algo, el agente se rectifica en voz
-alta y el hallazgo queda en el resumen de la llamada.
+penaliza por ocurrencia.
 
-> **Límite honesto:** Deepgram empieza a reproducir el audio antes de
-> entregarnos la transcripción del agente (verificable en los logs: los bytes
-> llegan antes que `ConversationText`). Así que el guardrail de salida
-> **detecta y corrige, no previene**. Bloquear exigiría retener el audio hasta
-> tener el texto, metiendo latencia justo donde no sobra.
+**No solo lo detecta: impide que suene.** El audio del agente pasa por este
+backend antes de llegar al navegador, así que se retiene hasta que el texto de
+ese turno pase la revisión. Si no pasa, se descarta sin reproducirse y el
+agente dice una corrección en su lugar — el paciente no llega a oír la dosis
+inventada ni aunque cuelgue inmediatamente después.
+
+Cuesta 20 ms: es todo el audio que Deepgram adelanta antes de entregar el texto
+(medido tres veces). Si el texto nunca llega, el audio se libera igual — dejar
+al paciente en silencio es peor que el riesgo que la compuerta cubre.
 
 ## Evaluación del triage sin gastar llamadas
 
