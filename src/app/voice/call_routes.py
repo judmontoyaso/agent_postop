@@ -28,6 +28,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 from websockets.exceptions import ConnectionClosed
 
+from app.agent.decision import explicar_triggers
 from app.agent.tools import TOOLS_SCHEMA, execute_tool
 from app.calls import build_summary, save_summary
 from app.config import GEMINI_MODEL, GROQ_MODEL, THINK_PROVIDER
@@ -194,6 +195,9 @@ async def call_socket(client_ws: WebSocket):
     turno_aprobado = False
     turno_vetado = False
     veto_desde = 0.0
+
+    relleno_dicho = False       # "déjeme revisar", como mucho una vez por turno
+    ultimo_eco = ""             # para no repetir el mismo eco en dos reconexiones
     # Failover entre proveedores permitidos por G3. Groq limita por TOKENS por
     # minuto y Gemini por PETICIONES por minuto: son cuotas independientes, así
     # que cuando una se agota la otra casi nunca lo está. Antes, agotar la única
@@ -374,7 +378,7 @@ async def call_socket(client_ws: WebSocket):
         nonlocal rate_limit_wait, nivel_final, nivel_llm, motivo_escalamiento
         nonlocal rag_queries_total, turno_input_tokens, turno_output_tokens
         nonlocal ultimo_habla_usuario, agente_hablando, recordatorio_enviado
-        nonlocal turno_aprobado, turno_vetado, veto_desde
+        nonlocal turno_aprobado, turno_vetado, veto_desde, relleno_dicho
 
         async for message in agent_ws:
             if not client_connected():
@@ -507,6 +511,15 @@ async def call_socket(client_ws: WebSocket):
 
             if etype == "AgentAudioDone":
                 agente_hablando = False
+                # El silencio se cuenta desde que el AGENTE calla, no desde que
+                # habló el paciente. Antes se medía desde `ultimo_habla_usuario`
+                # y el contador incluía todo el turno del agente: como sus
+                # respuestas duran 15-25 s, en cuanto terminaba de hablar ya
+                # llevaba "12 s de silencio" y soltaba "¿sigue ahí?" antes de
+                # dar tiempo a responder. En una llamada real lo preguntó cinco
+                # veces seguidas.
+                ultimo_habla_usuario = time.monotonic()
+                recordatorio_enviado = False
                 # Fin del turno hablado: se reinicia la compuerta para el
                 # siguiente. Si quedara audio retenido sin veredicto (el texto
                 # nunca llegó), se libera: dejar mudo al paciente es peor que
@@ -540,8 +553,28 @@ async def call_socket(client_ws: WebSocket):
                 speech_end_ts = time.monotonic()
                 ultimo_habla_usuario = time.monotonic()
                 recordatorio_enviado = False
+                relleno_dicho = False
                 if last_patient_text.strip():
                     sintomas.append(last_patient_text.strip())
+
+                # El piso de seguridad se evalúa en CADA frase del paciente, no
+                # solo cuando el modelo decide llamar a `escalar_paciente`.
+                # Antes vivía únicamente dentro de esa tool, así que un modelo
+                # que nunca la llamara dejaba la llamada sin red: los
+                # disparadores estaban, pero nadie los miraba. Se registra acá
+                # y el resumen lo recoge aunque el modelo no decida nada.
+                disparos = explicar_triggers(last_patient_text)
+                if disparos and nivel_final != "rojo":
+                    logger.error(
+                        f"[{call_id}] PISO DE SEGURIDAD — alarma en boca del paciente "
+                        f"{disparos}: se registra ROJO al margen del modelo"
+                    )
+                    nivel_final = "rojo"
+                    if not motivo_escalamiento:
+                        motivo_escalamiento = (
+                            f"Disparador clínico automático en lo que dijo el paciente: "
+                            f"{', '.join(disparos)}."
+                        )
             elif etype == "FunctionCallRequest":
                 invocations_this_turn += 1
                 logger.info(f"[{call_id}] FunctionCallRequest crudo: {event}")
@@ -552,12 +585,21 @@ async def call_socket(client_ws: WebSocket):
                 # por teléfono hacen que el paciente crea que se cortó. Solo
                 # para el RAG: `escalar_paciente` resuelve al instante y
                 # meterle una frase ahí solo alargaría el turno.
-                if any((c.get("name") or c.get("function_name")) == "consultar_guia_clinica"
-                       for c in event.get("functions", [event])):
+                #
+                # Como mucho UNA vez por turno del paciente: el agente consulta
+                # la guía casi en cada respuesta, y en una llamada real dijo
+                # "déjeme revisar un momento" seis veces seguidas, incluso para
+                # un "el dolor ha bajado bastante". Repetida deja de tapar el
+                # silencio y pasa a sonar a muletilla de robot.
+                if not relleno_dicho and any(
+                    (c.get("name") or c.get("function_name")) == "consultar_guia_clinica"
+                    for c in event.get("functions", [event])
+                ):
+                    relleno_dicho = True
                     try:
                         await agent_ws.send(json.dumps({
                             "type": "InjectAgentMessage",
-                            "content": "Déjeme revisar un momento la guía clínica.",
+                            "content": "Déjeme revisar un momento.",
                         }))
                     except CONNECTION_ERRORS:
                         pass
@@ -641,8 +683,15 @@ async def call_socket(client_ws: WebSocket):
                     contexto_sesion = (patient_context or "") + memoria
                 # El saludo de reconexión repite lo último que le oyó al
                 # paciente: le demuestra que no perdió el hilo y le da la
-                # oportunidad de corregir una transcripción equivocada.
+                # oportunidad de corregir una transcripción equivocada. Pero
+                # solo la primera vez: con varios cortes seguidos y el paciente
+                # todavía sin hablar, el eco es siempre la misma frase y el
+                # agente parecía un disco rayado repitiéndosela.
                 saludo_sesion = build_reconnect_line(sintomas) if sintomas else RECONNECT_LINE
+                if saludo_sesion == ultimo_eco:
+                    saludo_sesion = RECONNECT_LINE
+                else:
+                    ultimo_eco = saludo_sesion
 
             agent_ws = await open_agent_session(
                 greeting=saludo_sesion,
