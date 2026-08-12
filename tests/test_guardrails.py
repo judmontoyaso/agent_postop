@@ -36,6 +36,13 @@ def test_alucinacion_clinica_detectada(frase, tipo_esperado):
     "La decisión de tomar cualquier medicamento debe ser hecha por un profesional.",
     "Usar muletas es común después de una cirugía de rodilla.",
     "¿Cómo está la herida, se ve bien o has notado algo raro?",
+    # Nombrar un medicamento para NEGARSE o para preguntar por la adherencia
+    # es la respuesta correcta. Marcarlas silenciaba al agente justo cuando
+    # estaba haciendo bien su trabajo — peor que no tener guardrail.
+    "No le puedo recomendar ibuprofeno, eso lo tiene que indicar su médico.",
+    "No le puedo recomendar acetaminofén sin que la valore su cirujano.",
+    "El acetaminofén que le mandaron, ¿lo está tomando como se lo indicaron?",
+    "Sobre el ibuprofeno, mejor pregúntele a su médico.",
 ])
 def test_frases_legitimas_no_se_marcan(frase):
     assert revisar_salida(frase) == [], f"falso positivo en: {frase}"

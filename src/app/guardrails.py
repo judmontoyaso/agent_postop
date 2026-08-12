@@ -75,10 +75,29 @@ RE_PROCEDIMIENTO = re.compile(
     re.IGNORECASE,
 )
 
+# Nombrar un medicamento NO es alucinar: el agente puede negarse ("no le puedo
+# recomendar ibuprofeno") o preguntar por la adherencia ("el acetaminofén que le
+# mandaron, ¿lo está tomando?"), y ambas son respuestas correctas. Lo que
+# penaliza la rúbrica es INDICARLO. Así que un medicamento solo cuenta cuando
+# aparece en contexto prescriptivo — y ese contexto, además, no puede ir negado.
+#
+# Sin este filtro la compuerta de audio silenciaba al agente justo cuando estaba
+# haciendo lo correcto, que es peor que no tener guardrail: el paciente se queda
+# sin la negativa y sin la pregunta clínica.
+RE_PRESCRIPTIVO = re.compile(
+    r"\b(pued[ae]\s+tomar|tome(se)?\b|tomar\s+\d|recomiendo|le\s+(mando|receto|indico)|"
+    r"voy\s+a\s+recetar|apliques?e|use\s+|tomese|dele\b|subale)",
+    re.IGNORECASE,
+)
+
 MENSAJE_CORRECCION = (
     "Perdón, me adelanté: yo no estoy para indicarle medicamentos, dosis ni "
     "procedimientos. Eso se lo tiene que decir su médico. Sigamos con cómo se siente."
 )
+
+
+NEGADORES = ("no", "nunca", "jamas", "tampoco", "sin")
+VENTANA_NEGACION = 35
 
 
 def _normalizar(texto: str) -> str:
@@ -86,6 +105,13 @@ def _normalizar(texto: str) -> str:
     'acetaminofen' indistintamente."""
     plano = unicodedata.normalize("NFKD", texto)
     return "".join(c for c in plano if not unicodedata.combining(c)).lower()
+
+
+def _viene_negado(texto: str, inicio: int) -> bool:
+    """¿El verbo prescriptivo va negado? "no le puedo recomendar ibuprofeno"
+    es exactamente lo contrario de indicarlo."""
+    contexto = texto[max(0, inicio - VENTANA_NEGACION):inicio]
+    return any(re.search(rf"\b{n}\b", contexto) for n in NEGADORES)
 
 
 def revisar_salida(texto: str) -> list[dict]:
@@ -96,15 +122,24 @@ def revisar_salida(texto: str) -> list[dict]:
     plano = _normalizar(texto)
     hallazgos: list[dict] = []
 
+    dosis = RE_DOSIS.search(plano)
+
     encontrados = [m for m in MEDICAMENTOS if m in plano]
     if encontrados:
-        hallazgos.append({
-            "tipo": "medicamento",
-            "detalle": ", ".join(sorted(set(encontrados))),
-            "frase": texto.strip(),
-        })
+        prescriptivo = RE_PRESCRIPTIVO.search(plano)
+        # Se indica el medicamento solo si hay verbo prescriptivo sin negar, o
+        # si viene con una dosis concreta. Nombrarlo para negarse o para
+        # preguntar por la adherencia no cuenta.
+        indica = bool(dosis) or (
+            prescriptivo is not None and not _viene_negado(plano, prescriptivo.start())
+        )
+        if indica:
+            hallazgos.append({
+                "tipo": "medicamento",
+                "detalle": ", ".join(sorted(set(encontrados))),
+                "frase": texto.strip(),
+            })
 
-    dosis = RE_DOSIS.search(plano)
     if dosis:
         hallazgos.append({"tipo": "dosis", "detalle": dosis.group(0), "frase": texto.strip()})
 
