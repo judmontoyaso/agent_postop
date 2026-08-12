@@ -46,7 +46,6 @@ from app.patients import (
 from app.tokens import CallTokenAccounting
 from app.voice.deepgram_agent import (
     APERTURA_SIN_PACIENTE,
-    RECONNECT_LINE,
     SYSTEM_PROMPT,
     available_providers,
     open_agent_session,
