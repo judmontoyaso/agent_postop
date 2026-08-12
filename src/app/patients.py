@@ -147,7 +147,7 @@ MAX_CHARS_POR_REPORTE = 130
 MAX_CHARS_ECO = 120
 
 
-def build_reconnect_line(sintomas: list[str]) -> str:
+def build_reconnect_line(sintomas: list[str], ultima_pregunta: str = "") -> str:
     """Lo que dice el agente al retomar tras un corte.
 
     Le devuelve al paciente lo último que le oyó, en vez de un "se cortó" a
@@ -160,6 +160,17 @@ def build_reconnect_line(sintomas: list[str]) -> str:
        devolvérselo es la única forma de que lo corrija. Seguir en silencio
        sobre una transcripción equivocada es peor que perder el turno.
     """
+    # SIEMPRE termina en una pregunta. Deepgram trata esta frase como saludo:
+    # la dice y cede el turno, esperando al paciente. Una línea que acaba en
+    # "sigo con usted" suena a que el agente va a continuar y a continuación se
+    # queda callado — parece que se colgó. Repitiendo la pregunta que tenía
+    # pendiente, el paciente sabe exactamente qué contestar y la conversación
+    # arranca sola.
+    pendiente = (ultima_pregunta or "").strip()
+    if len(pendiente) > MAX_CHARS_ECO:
+        pendiente = pendiente[:MAX_CHARS_ECO].rsplit(" ", 1)[0] + "…"
+    retoma = f" Le preguntaba: {pendiente}" if pendiente else " ¿Cómo se ha sentido?"
+
     # El último turno útil, no literalmente el último: repetirle "alcancé a
     # escucharle: sí" no le confirma nada. Se busca hacia atrás la última frase
     # con contenido real.
@@ -168,7 +179,7 @@ def build_reconnect_line(sintomas: list[str]) -> str:
         next((s.strip() for s in reversed(sintomas) if s.strip()), ""),
     )
     if len(ultimo) < 15:
-        return "Perdón, se cortó un segundo. Sigo con usted."
+        return f"Perdón, se cortó un segundo.{retoma}"
 
     eco = ultimo.rstrip(" .,;")
     if len(eco) > MAX_CHARS_ECO:
@@ -187,8 +198,7 @@ def build_reconnect_line(sintomas: list[str]) -> str:
     eco = eco[0].lower() + eco[1:]
     cierre = "" if eco.endswith("…") else "."
 
-    return (f"Perdón, se cortó un segundo, pero sí alcancé a escucharle: {eco}{cierre} "
-            f"Sigo con usted.")
+    return f"Perdón, se cortó un segundo, pero sí alcancé a escucharle: {eco}{cierre}{retoma}"
 
 
 def build_memory_prompt(

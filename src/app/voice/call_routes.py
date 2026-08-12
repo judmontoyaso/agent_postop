@@ -687,9 +687,12 @@ async def call_socket(client_ws: WebSocket):
                 # solo la primera vez: con varios cortes seguidos y el paciente
                 # todavía sin hablar, el eco es siempre la misma frase y el
                 # agente parecía un disco rayado repitiéndosela.
-                saludo_sesion = build_reconnect_line(sintomas) if sintomas else RECONNECT_LINE
+                saludo_sesion = build_reconnect_line(sintomas, ultima_del_agente)
                 if saludo_sesion == ultimo_eco:
-                    saludo_sesion = RECONNECT_LINE
+                    # Mismo eco que en el corte anterior (el paciente aún no ha
+                    # vuelto a hablar): se deja solo la retoma, sin repetirle
+                    # otra vez lo que ya le repitió.
+                    saludo_sesion = build_reconnect_line([], ultima_del_agente)
                 else:
                     ultimo_eco = saludo_sesion
 
