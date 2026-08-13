@@ -97,16 +97,23 @@ cp .env.example .env
 
 # 5. Indexar el conocimiento clínico
 #    (~5 min la primera vez: baja el embedder y los modelos de OCR)
-python scripts/ingest_dataset.py
+.venv\Scripts\python.exe scripts/ingest_dataset.py
 #    Salida esperada: "Indexados: 107/107", con 1 vía OCR — el PDF escaneado
 #    sin capa de texto que trae el dataset.
 
 # 6. Verificar setup
-python scripts/setup_check.py
+.venv\Scripts\python.exe scripts/setup_check.py
 
 # 7. Levantar el servidor
-uvicorn app.main:app --port 8000
+.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000   # Windows
+# .venv/bin/python -m uvicorn app.main:app --port 8000         # Linux / macOS
 ```
+
+> Se llama al Python del entorno por su ruta a propósito, en vez de `uvicorn`
+> a secas. Si el entorno no quedó activado —cosa que pasa fácil en PowerShell,
+> donde la política de ejecución puede bloquear `activate`— el `uvicorn` suelto
+> resuelve al Python del sistema y falla con `ModuleNotFoundError: No module
+> named 'app'`, que no dice nada del problema real.
 
 ### Comprobaciones opcionales (no hacen falta para levantar)
 
