@@ -20,3 +20,7 @@ dist/
 
 # Entregable con credenciales dentro: NO se versiona
 docs/*.docx
+
+# Videos del entregable: van por el canal del reto, no en el repo
+docs/*.mp4
+docs/*.mov
