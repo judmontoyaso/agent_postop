@@ -65,12 +65,73 @@ def añadir_tabla(doc: Document, filas: list[str]) -> None:
                     run.bold = True
 
 
+def bloque_credenciales() -> str:
+    """Las credenciales se leen del .env y se pegan SOLO en el .docx.
+
+    La compuerta G2 exige que el jurado pueda levantar el proyecto siguiendo el
+    README "credenciales, URLs y accesos incluidos", y penaliza expresamente
+    las "credenciales rotas". Pero ponerlas en el repositorio público sería la
+    forma más rápida de romperlas: GitHub detecta las claves y los proveedores
+    las revocan en minutos.
+
+    Por eso el `.env.example` va vacío y las claves viajan en este documento,
+    que es un entregable privado y no se versiona (ver .gitignore).
+    """
+    env = RAIZ / ".env"
+    if not env.exists():
+        return ""
+
+    valores = {}
+    for linea in env.read_text(encoding="utf-8").splitlines():
+        if "=" in linea and not linea.strip().startswith("#"):
+            k, _, v = linea.partition("=")
+            valores[k.strip()] = v.strip()
+
+    filas = [
+        ("GROQ_API_KEY", "Modelo declarado (Llama 3.3 70B). Tier gratuito."),
+        ("DEEPGRAM_API_KEY", "Voz: transcripción, detección de turnos y síntesis."),
+        ("GEMINI_API_KEY", "Proveedor de respaldo. Solo hace falta para el failover."),
+    ]
+    lineas = [
+        "---",
+        "",
+        "## 14. Credenciales para la evaluación",
+        "",
+        "El `.env.example` del repositorio va sin claves a propósito: publicarlas "
+        "en GitHub hace que los proveedores las revoquen automáticamente, que es "
+        "justo el escenario de *credenciales rotas* que penaliza la compuerta G2. "
+        "Van aquí, en el entregable privado.",
+        "",
+        "Para levantar el proyecto basta copiar `.env.example` a `.env` y pegar "
+        "estos valores:",
+        "",
+        "| Variable | Valor | Para qué |",
+        "|---|---|---|",
+    ]
+    for clave, uso in filas:
+        valor = valores.get(clave, "")
+        lineas.append(f"| `{clave}` | `{valor or '(no configurada)'}` | {uso} |")
+
+    lineas += [
+        "",
+        "Con `GROQ_API_KEY` y `DEEPGRAM_API_KEY` el sistema funciona completo. "
+        "Añadiendo `GEMINI_API_KEY` se activa además el failover automático entre "
+        "proveedores descrito en el apartado 2.",
+        "",
+        "El resto de variables del `.env.example` ya traen valores por defecto "
+        "correctos y no hay que tocarlas.",
+        "",
+    ]
+    return "\n".join(lineas)
+
+
 def convertir() -> None:
     doc = Document()
     doc.styles["Normal"].font.name = "Calibri"
     doc.styles["Normal"].font.size = Pt(11)
 
-    lineas = ORIGEN.read_text(encoding="utf-8").split("\n")
+    contenido = ORIGEN.read_text(encoding="utf-8") + "\n" + bloque_credenciales()
+    lineas = contenido.split("\n")
     i = 0
     while i < len(lineas):
         linea = lineas[i]

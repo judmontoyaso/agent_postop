@@ -40,6 +40,13 @@ de entorno, sin tocar código.
 ```bash
 # 1. Clonar y crear entorno  (Python 3.12 recomendado: los pines de torch y
 #    chromadb todavía no traen ruedas para 3.13+)
+#
+#    EN WINDOWS, clonar en una ruta CORTA (p.ej. C:\proyectos\ o C:\dev\).
+#    Torch instala archivos con rutas internas muy largas y, partiendo de una
+#    carpeta ya profunda, la instalación falla con
+#    "OSError: [Errno 2] No such file or directory" al superar el límite de
+#    260 caracteres de Windows. Verificado: desde C:\ instala en 2.7 min sin
+#    errores; desde una carpeta anidada, revienta.
 git clone https://github.com/judmontoyaso/agent_postop
 cd agent_postop
 python -m venv .venv
