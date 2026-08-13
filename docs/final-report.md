@@ -1,6 +1,14 @@
 # Informe final — Agente de voz para seguimiento postoperatorio
 
-**Tech Sphere Challenge 2026** · Repositorio: https://github.com/judmontoyaso/agent_postop
+**Tech Sphere Challenge 2026**
+
+| | |
+|---|---|
+| **Repositorio** | https://github.com/judmontoyaso/agent_postop |
+| **Video y documentos** | https://drive.google.com/drive/folders/1hZiKRTLN_2soGw9vHdBgnNcGcm5Hpd2V?usp=sharing |
+
+Las credenciales para levantar el proyecto están en el último apartado de este
+documento.
 
 ---
 

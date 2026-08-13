@@ -5,6 +5,20 @@ postoperatorio a pacientes en español colombiano, evalúa síntomas contra una
 base de conocimiento clínico (RAG) y decide nivel de escalamiento
 (verde/amarillo/rojo) con sesgo explícito contra falsos negativos.
 
+## Entregables
+
+| Entregable | Dónde |
+|---|---|
+| **Repositorio** | este mismo |
+| **Informe final** | [carpeta de entrega](https://drive.google.com/drive/folders/1hZiKRTLN_2soGw9vHdBgnNcGcm5Hpd2V?usp=sharing) — incluye las credenciales para levantar el proyecto |
+| **Video** | [carpeta de entrega](https://drive.google.com/drive/folders/1hZiKRTLN_2soGw9vHdBgnNcGcm5Hpd2V?usp=sharing) — demo + las dos preguntas |
+| **Diagramas** | [`docs/architecture.md`](docs/architecture.md) y [`docs/decision-flow.md`](docs/decision-flow.md) |
+
+> Las claves de API **no** están en el repositorio: publicarlas en GitHub hace
+> que los proveedores las revoquen automáticamente. Van en el informe final,
+> que es un entregable privado. El `.env.example` viene con los nombres de las
+> variables y sin valores.
+
 ## Modelo declarado (G3)
 
 **Meta Llama vía Groq**, servido como `llama-3.3-70b-versatile`. La lista de G3
