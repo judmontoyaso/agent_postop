@@ -10,6 +10,8 @@ description = "Agente de voz para seguimiento postoperatorio en español colombi
 # El techo es 3.12 porque los pines de torch y chromadb todavía no traen
 # ruedas para 3.13 — instalarlo ahí obliga a compilar y rompe el gate G2.
 requires-python = ">=3.11,<3.13"
+license = "MIT"
+license-files = ["LICENSE"]
 readme = "README.md"
 
 # Las dependencias de ejecución viven en requirements.txt y NO se duplican acá.
