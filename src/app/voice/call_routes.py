@@ -22,7 +22,7 @@ import logging
 import re
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
@@ -172,7 +172,7 @@ async def call_socket(client_ws: WebSocket):
     # Material del resumen final (criterio de 20 pts de la rúbrica). Se acumula
     # durante toda la llamada, incluidas las reconexiones: el paciente no tiene
     # por qué perder su historia porque a Groq se le acabó la cuota un segundo.
-    started_at = datetime.now(UTC)
+    started_at = datetime.now(timezone.utc)
     sintomas: list[str] = []       # lo que reportó el paciente, textual
     referencias: list[dict] = []   # documentos del RAG que sustentaron respuestas
     transcripcion: list[dict] = []

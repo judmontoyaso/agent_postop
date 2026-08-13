@@ -1,6 +1,7 @@
 """scripts/setup_check.py — Verifica que el setup cumple el gate G2 (<=15 min).
 Corre esto después de seguir el README desde cero, antes de grabar el demo."""
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -16,7 +17,12 @@ def check(name: str, condition: bool, hint: str = "") -> bool:
 
 def main():
     ok = True
+    py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    py_ok = (3, 10) <= sys.version_info[:2] < (3, 13)
+    ok &= check(f"Python >= 3.10 y < 3.13 (actual: {py_ver})", py_ok, "se requiere Python 3.10, 3.11 o 3.12")
+
     ok &= check("GROQ_API_KEY", bool(os.getenv("GROQ_API_KEY")), "definir en .env")
+
     ok &= check("DEEPGRAM_API_KEY", bool(os.getenv("DEEPGRAM_API_KEY")), "definir en .env")
 
     dataset_dir = Path(os.getenv("DATASET_DIR", "./dataset"))

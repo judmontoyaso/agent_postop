@@ -7,7 +7,7 @@ de modelo por turno, queries RAG por llamada, costo estimado por llamada.
 import logging
 import sqlite3
 import statistics
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from app.config import METRICS_DB_PATH
@@ -57,7 +57,7 @@ def track_turn(
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (call_id, turn_index, model_id, input_tokens, output_tokens,
              model_invocations, rag_queries, speech_end_to_audio_start_ms,
-             escalation_level, datetime.now(UTC).isoformat()),
+             escalation_level, datetime.now(timezone.utc).isoformat()),
         )
         conn.commit()
         conn.close()

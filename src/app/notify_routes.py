@@ -17,7 +17,7 @@ tal para no dar a entender que hay una integración hospitalaria que no existe.
 import json
 import logging
 import sqlite3
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request
 
@@ -46,7 +46,7 @@ def init_inbox_db() -> None:
 async def recibir(request: Request):
     """Recibe el aviso de escalamiento y lo guarda con su hora de llegada."""
     payload = await request.json()
-    recibido = datetime.now(UTC).isoformat()
+    recibido = datetime.now(timezone.utc).isoformat()
     conn = sqlite3.connect(METRICS_DB_PATH)
     conn.execute(
         "INSERT INTO escalation_inbox (recibido_at, call_id, nivel, payload) VALUES (?,?,?,?)",

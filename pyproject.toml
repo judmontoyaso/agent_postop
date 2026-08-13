@@ -6,10 +6,13 @@ build-backend = "setuptools.build_meta"
 name = "agent-postop"
 version = "1.0.0"
 description = "Agente de voz para seguimiento postoperatorio en español colombiano — Tech Sphere Challenge 2026"
-# 3.11 es el piso real: el código usa `datetime.UTC`, que no existe antes.
-# El techo es 3.12 porque los pines de torch y chromadb todavía no traen
-# ruedas para 3.13 — instalarlo ahí obliga a compilar y rompe el gate G2.
-requires-python = ">=3.11,<3.13"
+# 3.10 es el piso: nada del código necesita sintaxis posterior. Se probó exigir
+# 3.11 y fue un error — quien tuviera 3.10 instalado se encontraba con
+# "requires a different Python", el paquete no se instalaba y todo lo demás
+# fallaba con "No module named app", que no explica nada.
+# El techo es 3.12 porque los pines de torch y chromadb todavía no traen ruedas
+# para 3.13: instalarlo ahí obliga a compilar y rompe el gate G2.
+requires-python = ">=3.10,<3.13"
 license = "MIT"
 license-files = ["LICENSE"]
 readme = "README.md"
@@ -37,7 +40,7 @@ where = ["src"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py310"
 exclude = ["bin", "data", "dataset", ".venv", "build"]
 src = ["src", "scripts", "tests"]
 

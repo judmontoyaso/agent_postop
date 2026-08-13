@@ -49,10 +49,48 @@ de entorno, sin tocar código.
 | Backend | FastAPI + WebSockets |
 | Métricas | SQLite (`app/metrics.py`) |
 
+## Arquitectura de Infraestructura
+
+```mermaid
+graph TD
+    B["Navegador — /call<br/>nombre + cirugía + día postop<br/>mic PCM16 16 kHz"]
+    B -->|"WS /ws/call?nombre&procedimiento&dia"| BE
+
+    subgraph backend["Backend FastAPI — app/"]
+        BE["voice/call_routes.py<br/>puente de audio, cola de mic,<br/>failover, resumen"]
+        PAT["patients.py<br/>contexto de la llamada,<br/>memoria de reconexión"]
+        TOOLS["agent/tools.py<br/>consultar_guia_clinica<br/>escalar_paciente"]
+        DEC["agent/decision.py<br/>hard triggers → verde/amarillo/rojo"]
+        MET["metrics.py + tokens.py<br/>latencia P50/P95, tokens estimados"]
+        CALLS["calls.py<br/>resumen persistente por llamada"]
+    end
+
+    BE --> PAT
+    BE -->|"audio + FunctionCallResponse"| DG
+    DG -->|"FunctionCallRequest"| BE
+    BE --> TOOLS
+    TOOLS --> DEC
+    TOOLS --> RAG
+    BE --> MET
+    BE --> CALLS
+
+    DG["Deepgram Voice Agent API<br/>STT + turn-detection + TTS streaming"]
+    DG -->|"think.provider (BYOM)"| PROV
+
+    subgraph PROV["Proveedor de razonamiento — failover automático"]
+        GROQ["Groq · llama-3.3-70b-versatile<br/>límite: 12 000 tokens/min"]
+        GEM["Google · gemini-3.1-flash-lite<br/>límite: peticiones/min"]
+    end
+
+    RAG["ChromaDB + embedder local<br/>106 PDFs, filtrados por patología"]
+    ADM["Navegador — /admin"] -->|"POST/DELETE /api/admin/documents"| RAG
+    CALLS -->|"GET /api/calls"| ADM
+```
+
 ## Setup (objetivo: <=15 minutos, gate G2)
 
-> **Python 3.12 recomendado.** Los pines de torch y chromadb todavía no traen
-> ruedas para 3.13+.
+> **Python >= 3.10.** Mínimo Python 3.10 (compatible con 3.10, 3.11 y 3.12). Los pines de torch y chromadb todavía no traen ruedas para 3.13+.
+
 >
 > **En Windows, clona en una ruta corta** (`C:\proyectos\`, `C:\dev\`). Torch
 > instala archivos con rutas internas muy largas y, partiendo de una carpeta ya
