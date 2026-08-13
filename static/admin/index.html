@@ -52,7 +52,24 @@
             letter-spacing: 0.05em; margin-top: 0.15rem; }
   .kpi.alerta .n { color: #ff9d9d; }
 
-  #detalle { display: none; }
+  /* El detalle vivía en un panel al final de la página: había que desplazarse
+     hasta abajo y se perdía de vista la fila que se acababa de pulsar. En modal
+     aparece sobre la tabla, que es donde está mirando quien hace clic. */
+  #modal {
+    display: none; position: fixed; inset: 0; z-index: 50;
+    background: rgba(0,0,0,0.65); padding: 2rem 1rem; overflow-y: auto;
+  }
+  #modal.abierto { display: block; }
+  #modal-caja {
+    background: #14161c; border: 1px solid #2a2d38; border-radius: 12px;
+    max-width: 720px; margin: 0 auto; padding: 1.4rem;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  #modal-cerrar {
+    float: right; background: none; border: none; color: #7d7d88;
+    font-size: 1.5rem; line-height: 1; cursor: pointer; padding: 0 0.3rem;
+  }
+  #modal-cerrar:hover { color: #e8e8ea; }
   #detalle dt { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em;
                 color: #7d7d88; margin-top: 0.8rem; }
   #detalle dd { margin: 0.15rem 0 0; font-size: 0.85rem; line-height: 1.5; }
@@ -96,8 +113,14 @@
       </table>
     </div>
 
-    <div class="panel" id="detalle"></div>
   </section>
+
+  <div id="modal">
+    <div id="modal-caja">
+      <button id="modal-cerrar" title="Cerrar">&times;</button>
+      <div id="detalle"></div>
+    </div>
+  </div>
 
   <section id="vistaDocs" style="display:none">
     <div class="panel">
@@ -217,9 +240,26 @@ function pintarDetalle(c) {
   h += `</dd></dl>`;
 
   $('detalle').innerHTML = h;
-  $('detalle').style.display = 'block';
-  $('detalle').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  abrirModal();
 }
+
+function abrirModal() {
+  $('modal').classList.add('abierto');
+  // Se bloquea el desplazamiento del fondo: sin esto la rueda del ratón mueve
+  // la tabla de detrás en vez del contenido del modal.
+  document.body.style.overflow = 'hidden';
+  $('modal').scrollTop = 0;
+}
+
+function cerrarModal() {
+  $('modal').classList.remove('abierto');
+  document.body.style.overflow = '';
+}
+
+$('modal-cerrar').onclick = cerrarModal;
+// Clic en el fondo oscuro, no dentro de la caja.
+$('modal').onclick = (e) => { if (e.target === $('modal')) cerrarModal(); };
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') cerrarModal(); });
 
 async function cargarAvisos() {
   const tb = document.querySelector('#tablaAvisos tbody');

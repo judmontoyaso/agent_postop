@@ -31,7 +31,13 @@ from websockets.exceptions import ConnectionClosed
 from app.agent.decision import explicar_triggers
 from app.agent.tools import TOOLS_SCHEMA, execute_tool
 from app.calls import build_summary, save_summary
-from app.config import GEMINI_MODEL, GROQ_MODEL, THINK_PROVIDER
+from app.config import (
+    GEMINI_MODEL,
+    GROQ_MODEL,
+    GUARDRAIL_BLOQUEA_AUDIO,
+    INYECTAR_VOZ,
+    THINK_PROVIDER,
+)
 from app.guardrails import MENSAJE_CORRECCION, revisar_salida
 from app.metrics import track_turn
 from app.notify import avisar_en_segundo_plano
@@ -41,6 +47,7 @@ from app.patients import (
     build_greeting,
     build_memory_prompt,
     build_reconnect_line,
+    extraer_de_lo_que_dijo,
     get_procedure,
 )
 from app.tokens import CallTokenAccounting
@@ -197,6 +204,7 @@ async def call_socket(client_ws: WebSocket):
 
     relleno_dicho = False       # "déjeme revisar", como mucho una vez por turno
     ultimo_eco = ""             # para no repetir el mismo eco en dos reconexiones
+    correccion_pendiente = False  # se dice al acabar el turno, no encima de él
     # Failover entre proveedores permitidos por G3. Groq limita por TOKENS por
     # minuto y Gemini por PETICIONES por minuto: son cuotas independientes, así
     # que cuando una se agota la otra casi nunca lo está. Antes, agotar la única
@@ -337,6 +345,8 @@ async def call_socket(client_ws: WebSocket):
                     continue
                 callado = time.monotonic() - ultimo_habla_usuario
 
+                if not INYECTAR_VOZ:
+                    continue
                 if callado > SILENCIO_CIERRE_S:
                     logger.warning(
                         f"[{call_id}] {callado:.0f}s sin respuesta del paciente — cerrando"
@@ -378,6 +388,7 @@ async def call_socket(client_ws: WebSocket):
         nonlocal rag_queries_total, turno_input_tokens, turno_output_tokens
         nonlocal ultimo_habla_usuario, agente_hablando, recordatorio_enviado
         nonlocal turno_aprobado, turno_vetado, veto_desde, relleno_dicho
+        nonlocal correccion_pendiente, procedimiento_label, dia_postop, rag_category
 
         async for message in agent_ws:
             if not client_connected():
@@ -386,7 +397,7 @@ async def call_socket(client_ws: WebSocket):
             if isinstance(message, bytes):
                 agente_hablando = True
 
-                if turno_vetado:
+                if GUARDRAIL_BLOQUEA_AUDIO and turno_vetado:
                     # El texto de este turno no pasó el guardrail: su audio se
                     # descarta entero. El paciente no lo oye nunca.
                     if time.monotonic() - veto_desde > VETO_MAX_S:
@@ -397,7 +408,7 @@ async def call_socket(client_ws: WebSocket):
                         turno_vetado = False
                     continue
 
-                if not turno_aprobado:
+                if GUARDRAIL_BLOQUEA_AUDIO and not turno_aprobado:
                     audio_retenido.append(message)
                     continue
 
@@ -472,13 +483,13 @@ async def call_socket(client_ws: WebSocket):
                             f"[{call_id}] descartados {descartados} chunks de audio sin "
                             f"reproducir — el agente dirá la corrección en su lugar"
                         )
-                        try:
-                            await agent_ws.send(json.dumps({
-                                "type": "InjectAgentMessage",
-                                "content": MENSAJE_CORRECCION,
-                            }))
-                        except CONNECTION_ERRORS:
-                            pass
+                        # La corrección NO se inyecta aquí: en este punto el
+                        # agente está a mitad de su frase y meterle otra voz
+                        # encima produce dos audios solapados. Se encola y se
+                        # dice en cuanto termine de hablar (AgentAudioDone),
+                        # que además es donde suena natural: primero acaba,
+                        # después se rectifica.
+                        correccion_pendiente = True
                         if client_connected():
                             try:
                                 await client_ws.send_text(json.dumps({
@@ -538,6 +549,20 @@ async def call_socket(client_ws: WebSocket):
                 audio_retenido.clear()
                 turno_aprobado = False
                 turno_vetado = False
+
+                # El agente acaba de callar: es el momento seguro para meterle
+                # la corrección del guardrail sin pisarle la frase.
+                if correccion_pendiente:
+                    correccion_pendiente = False
+                    if INYECTAR_VOZ:
+                        logger.warning(f"[{call_id}] inyectando corrección del guardrail")
+                        try:
+                            await agent_ws.send(json.dumps({
+                                "type": "InjectAgentMessage",
+                                "content": MENSAJE_CORRECCION,
+                            }))
+                        except CONNECTION_ERRORS:
+                            pass
             elif etype == "UserStartedSpeaking":
                 speech_end_ts = None
                 ultimo_habla_usuario = time.monotonic()
@@ -555,6 +580,26 @@ async def call_socket(client_ws: WebSocket):
                 relleno_dicho = False
                 if last_patient_text.strip():
                     sintomas.append(last_patient_text.strip())
+
+                # En llamadas sin formulario, el paciente cuenta él mismo de qué
+                # lo operaron y hace cuántos días. Antes esa información se
+                # quedaba en la conversación y no llegaba a ningún lado: el
+                # resumen decía "(no declarado)" pese a estar dicho, y el RAG
+                # seguía buscando en las cinco patologías. Se captura al vuelo,
+                # sin pisar lo que ya venía del formulario.
+                dicho = extraer_de_lo_que_dijo(last_patient_text)
+                if dicho.get("procedimiento_key") and procedimiento_label == "(no declarado)":
+                    proc = get_procedure(dicho["procedimiento_key"])
+                    if proc:
+                        procedimiento_label = proc["label"]
+                        rag_category = proc["category"]
+                        logger.info(
+                            f"[{call_id}] el paciente dijo su cirugía: {proc['label']} "
+                            f"— el RAG pasa a buscar solo en {proc['category']!r}"
+                        )
+                if dicho.get("dia_postop") and dia_postop is None:
+                    dia_postop = dicho["dia_postop"]
+                    logger.info(f"[{call_id}] el paciente dijo el día postoperatorio: {dia_postop}")
 
                 # El piso de seguridad se evalúa en CADA frase del paciente, no
                 # solo cuando el modelo decide llamar a `escalar_paciente`.
@@ -590,7 +635,12 @@ async def call_socket(client_ws: WebSocket):
                 # "déjeme revisar un momento" seis veces seguidas, incluso para
                 # un "el dolor ha bajado bastante". Repetida deja de tapar el
                 # silencio y pasa a sonar a muletilla de robot.
-                if not relleno_dicho and any(
+                # `not agente_hablando` es la condición clave: si Deepgram ya
+                # está sintetizando, inyectar aquí superpone dos voces y la
+                # llamada se vuelve ininteligible. El relleno solo tiene sentido
+                # en el hueco de silencio previo a la respuesta, que es
+                # exactamente cuando el agente no está hablando.
+                if INYECTAR_VOZ and not agente_hablando and not relleno_dicho and any(
                     (c.get("name") or c.get("function_name")) == "consultar_guia_clinica"
                     for c in event.get("functions", [event])
                 ):

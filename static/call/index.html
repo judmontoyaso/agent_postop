@@ -340,6 +340,24 @@ function meterLoop() {
   animationFrame = requestAnimationFrame(meterLoop);
 }
 
+// Colchón de reproducción. El audio llega en trozos de 20 ms y antes cada uno
+// se programaba pegado al anterior con `max(ahora, siguiente)`. Bastaba que un
+// trozo llegara con retraso —jitter de red, un hipo del navegador— para que el
+// reloj ya hubiera pasado su hueco: eso abre un SILENCIO real y la voz se oye
+// entrecortada. Adelantando la cola 200 ms hay margen para absorber retrasos
+// sin que se note en la conversación.
+const COLCHON_S = 0.2;
+let speakingTimer = null;
+
+function marcarHablando() {
+  setSpeaking(true);
+  // El indicador se apaga por temporizador, no al terminar cada trozo de 20 ms.
+  // Con `onended` por trozo, cualquier hueco mínimo apagaba y encendía el orbe
+  // — el parpadeo que se veía aunque el audio fuera bien.
+  clearTimeout(speakingTimer);
+  speakingTimer = setTimeout(() => setSpeaking(false), 350);
+}
+
 function playPcm16Chunk(buf) {
   // Audio TTS que llega de Deepgram: PCM16 mono a 24kHz (ver Settings en deepgram_agent.py).
   if (!playCtx) playCtx = new AudioContext();
@@ -354,32 +372,61 @@ function playPcm16Chunk(buf) {
   source.buffer = audioBuffer;
   source.connect(playCtx.destination);
 
-  const now = playCtx.currentTime;
-  const startAt = Math.max(now, nextPlayTime);
-  source.start(startAt);
-  nextPlayTime = startAt + audioBuffer.duration;
+  // Si la cola se quedó atrás (o es el primer trozo), se rearma con colchón.
+  const minimo = playCtx.currentTime + COLCHON_S;
+  if (nextPlayTime < minimo) nextPlayTime = minimo;
+  source.start(nextPlayTime);
+  nextPlayTime += audioBuffer.duration;
 
-  setSpeaking(true);
-  source.onended = () => {
-    if (playCtx.currentTime >= nextPlayTime - 0.05) setSpeaking(false);
-  };
+  marcarHablando();
 }
 
 let sentChunks = 0;
 let ultimoAudioReal = 0;
 let reporteMic = null;
 
+// Puerta de ruido con memoria hacia atrás.
+//
+// Deepgram interrumpe al agente en cuanto detecta sonido en el micrófono: la
+// respiración basta para que crea que el paciente lo está interrumpiendo y le
+// corte la frase. De ahí que la voz se oiga a trompicones. Como el audio sale
+// de aquí, la solución es no mandarle ese ruido.
+//
+// La memoria hacia atrás es lo que distingue esta versión de un gate ingenuo:
+// cuando la voz cruza el umbral, la primera sílaba YA ha pasado por debajo, así
+// que se guardan los últimos trozos y se envían justo antes de abrir. Sin eso
+// el reconocedor recibe "…oy bien" en vez de "estoy bien".
+const UMBRAL_VOZ = 0.022;   // respiración y ambiente quedan debajo; la voz, encima
+const COLA_VOZ_MS = 600;    // se sigue enviando tras callar, para no cortar finales
+const MEMORIA_CHUNKS = 3;   // ~250 ms de audio previo al arranque de la voz
+let ultimaVozReal = 0;
+let puertaAbierta = false;
+const memoriaPrevia = [];
+
 async function startCall() {
   errorBox.style.display = 'none';
   resumenEl.innerHTML = '';
   transcriptEl.textContent = '';
+  // La cola de reproducción se rearma en cada llamada: si queda el valor de la
+  // anterior, el primer trozo de la nueva se programa contra un reloj viejo.
+  nextPlayTime = 0;
+  clearTimeout(speakingTimer);
+  puertaAbierta = false;
+  memoriaPrevia.length = 0;
+  ultimaVozReal = 0;
   orb.classList.remove('error');
   startBtn.disabled = true;
   sentChunks = 0;
   stateEl.textContent = 'Pidiendo permiso de micrófono...';
 
   try {
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // Cancelación de eco explícita: con `audio: true` a secas la decisión queda
+    // en manos del navegador, y sin ella el micrófono capta la voz del propio
+    // agente saliendo por los altavoces. Deepgram lo toma por una interrupción
+    // del paciente y le corta la frase a mitad.
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
   } catch (e) {
     showError(`No se pudo acceder al micrófono: ${e.name} — ${e.message}. Revisa permisos del navegador.`);
     startBtn.disabled = false;
@@ -442,7 +489,24 @@ async function startCall() {
     const rms = Math.sqrt(suma / input.length);
     if (rms > 0.008) ultimoAudioReal = Date.now();
 
+    if (rms > UMBRAL_VOZ) ultimaVozReal = Date.now();
+    const hayVoz = Date.now() - ultimaVozReal < COLA_VOZ_MS;
+
     if (ws && ws.readyState === WebSocket.OPEN) {
+      if (hayVoz && !puertaAbierta) {
+        // Se abre la puerta: primero va el audio de justo antes del umbral,
+        // que contiene el arranque de la palabra.
+        puertaAbierta = true;
+        for (const previo of memoriaPrevia) ws.send(previo);
+        memoriaPrevia.length = 0;
+      } else if (!hayVoz) {
+        puertaAbierta = false;
+        // Silencio para Deepgram, pero se guarda el original por si la
+        // siguiente sílaba resulta ser voz.
+        memoriaPrevia.push(pcm16.buffer.slice(0));
+        while (memoriaPrevia.length > MEMORIA_CHUNKS) memoriaPrevia.shift();
+        pcm16.fill(0);
+      }
       ws.send(pcm16.buffer);
       sentChunks++;
       const mudo = Date.now() - ultimoAudioReal;

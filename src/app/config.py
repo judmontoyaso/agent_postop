@@ -56,6 +56,23 @@ DATASET_DIR = os.getenv("DATASET_DIR", str(BASE_DIR / "dataset"))
 # no se avisa a nadie (se registra en el log). Opcional a propósito: el
 # proyecto tiene que levantarse sin depender de servicios externos (G2).
 ESCALATION_WEBHOOK_URL = os.getenv("ESCALATION_WEBHOOK_URL", "")
+
+# ¿La compuerta del guardrail retiene el audio hasta validar el texto?
+#   true  -> una alucinación clínica NO llega a sonar (previene)
+#   false -> el audio sale directo; el guardrail sigue detectando y el agente
+#            se rectifica en el turno siguiente (corrige)
+# Es un interruptor porque la compuerta se añadió tarde y toca el camino del
+# audio en vivo: si una demo suena entrecortada, poder descartarla en un
+# reinicio vale más que la protección durante esa grabación.
+GUARDRAIL_BLOQUEA_AUDIO = os.getenv("GUARDRAIL_BLOQUEA_AUDIO", "true").lower() == "true"
+
+# ¿Se le puede meter voz al agente mientras conversa (InjectAgentMessage)?
+# Lo usan el relleno "déjeme revisar", el "¿sigue ahí?" y la corrección del
+# guardrail. Si Deepgram ya está sintetizando, la inyección se solapa con lo
+# que estaba diciendo y se oyen dos voces a la vez: entrecortado e
+# ininteligible. En false el agente conversa sin interrupciones; el guardrail
+# y el piso de seguridad siguen registrando todo.
+INYECTAR_VOZ = os.getenv("INYECTAR_VOZ", "true").lower() == "true"
 API_PORT = int(os.getenv("API_PORT", "8000"))
 
 # El OCR de los PDFs escaneados no necesita configuración: rasteriza PyMuPDF y

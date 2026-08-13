@@ -17,3 +17,6 @@ build/
 dist/
 .pytest_cache/
 .ruff_cache/
+
+# Entregable con credenciales dentro: NO se versiona
+docs/*.docx

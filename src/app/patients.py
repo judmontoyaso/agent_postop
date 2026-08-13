@@ -14,6 +14,8 @@ importa poder inventar el caso en el momento, no escoger de una lista fija. El
 5 carpetas de `dataset/textos/` para poder acotar el RAG a ese corpus.
 """
 import logging
+import re
+import unicodedata
 
 logger = logging.getLogger("patients")
 
@@ -50,6 +52,67 @@ def get_procedure(key: str) -> dict | None:
     if proc is None and key:
         logger.warning(f"procedimiento desconocido: {key!r} — llamada sin corpus acotado")
     return proc
+
+
+# Palabras con las que un paciente nombra su cirugía al teléfono. No dice
+# "colecistectomía": dice "me sacaron la vesícula".
+_PISTAS_PROCEDIMIENTO = {
+    "appendicitis": ("apendic", "apéndice", "apendice"),
+    "cholecystitis": ("vesicula", "vesícula", "colecist", "biliar"),
+    "colorectal_cancer": ("colon", "colorrectal", "colectom", "intestino grueso"),
+    "breast_cancer": ("mama", "seno", "mastectom", "pecho"),
+    "total_joint_replacement": ("rodilla", "cadera", "protesis", "prótesis", "articular"),
+}
+
+_RE_DIAS = re.compile(
+    r"\b(\d{1,3}|un|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|"
+    r"trece|catorce|quince|veinte|treinta)\s+d[ií]as?\b",
+    re.IGNORECASE,
+)
+_NUMEROS = {
+    "un": 1, "una": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5, "seis": 6,
+    "siete": 7, "ocho": 8, "nueve": 9, "diez": 10, "once": 11, "doce": 12,
+    "trece": 13, "catorce": 14, "quince": 15, "veinte": 20, "treinta": 30,
+}
+
+
+def _normalizar(texto: str) -> str:
+    """Sin acentos y en minúsculas: el STT escribe "vesícula" y "vesicula"
+    indistintamente, y el paciente dice "prótesis" o "protesis"."""
+    plano = unicodedata.normalize("NFKD", str(texto))
+    return "".join(c for c in plano if not unicodedata.combining(c)).lower()
+
+
+def extraer_de_lo_que_dijo(texto: str) -> dict:
+    """Saca cirugía y día postoperatorio de lo que cuenta el paciente.
+
+    Hace falta para las llamadas sin formulario: el paciente le dice al agente
+    "me operaron de la rodilla" y "hace siete días", el agente lo usa en la
+    conversación… y el sistema no lo guardaba en ningún sitio. El resumen
+    quedaba con "(no declarado)" pese a que el dato estaba dicho, y el RAG
+    seguía buscando en las cinco patologías en vez de acotarse a la correcta.
+
+    Devuelve solo las claves que encuentra, para no pisar lo que ya se sabe.
+    """
+    if not texto:
+        return {}
+
+    plano = _normalizar(texto)
+    hallado: dict = {}
+
+    for key, pistas in _PISTAS_PROCEDIMIENTO.items():
+        if any(_normalizar(p) in plano for p in pistas):
+            hallado["procedimiento_key"] = key
+            break
+
+    m = _RE_DIAS.search(texto)
+    if m:
+        crudo = m.group(1).lower()
+        dia = int(crudo) if crudo.isdigit() else _NUMEROS.get(crudo)
+        if dia and 1 <= dia <= 365:
+            hallado["dia_postop"] = dia
+
+    return hallado
 
 
 def _first_name(nombre: str) -> str:

@@ -63,6 +63,16 @@ Llama 3.x 1B–3B y Phi Mini: en un triage clínico donde el falso negativo es l
 falla catastrófica, la diferencia de razonamiento frente a un 70B no es un
 detalle de calidad, es la diferencia entre escalar y no escalar.
 
+> **Sobre el video.** El repositorio arranca en Groq, que es el modelo
+> declarado. La demostración grabada corre sobre **Gemini Flash**, la otra
+> familia de nube permitida: en los últimos días de desarrollo se agotó la cuota
+> diaria de Groq (100 000 tokens/día, 98 411 consumidos en pruebas) y el sistema
+> saltó al proveedor de respaldo, que es exactamente el comportamiento descrito
+> en este apartado. Quien clone el repositorio con una cuota de Groq intacta
+> verá lo mismo del video sobre Llama 3.3 70B: es el mismo código y solo cambia
+> una variable de entorno.
+
+
 ---
 
 ## 3. Arquitectura, en una frase por pieza
@@ -252,7 +262,32 @@ decidió nada, y eso es peor que decidir mal.
 
 ---
 
-## 8. Métricas
+## 8. Capturas de la sesión
+
+**La llamada y su resultado.** Paciente con apendicectomía en día 7 que
+minimiza sus síntomas —*"unas décimas"*, *"pero poquito"*— y aun así se escala
+a **rojo**, con el motivo clínico y los próximos pasos registrados.
+
+![Interfaz de llamada con el resumen al colgar](capura_llamada.png)
+
+**El detalle de la llamada en la consola clínica**, con las referencias del
+corpus que sustentaron cada respuesta y el consumo de la sesión.
+
+![Detalle de la llamada](captura_detalle_llamada.png)
+
+**La consola clínica**: indicadores, historial de llamadas y la bandeja de
+avisos enviados al equipo médico.
+
+![Consola clínica](captura_admin.png)
+
+**La base de conocimiento**, desde donde se sube y se elimina material clínico
+en caliente (compuerta G5).
+
+![Base de conocimiento](captura_base_conocimeinto.png)
+
+---
+
+## 9. Métricas
 
 Medidas sobre 64 turnos reales de conversación (`GET /api/metrics/summary`).
 
@@ -348,8 +383,7 @@ El número reportado tiene contraste contra el proveedor.
 
 ---
 
-## 9. Base de conocimiento
-
+## 10. Base de conocimiento
 - **107 de 107 PDFs indexados**, 5 patologías, incluido el PDF escaneado sin
   capa de texto que trae el dataset como trampa.
 - Ese PDF se resuelve **sin ninguna dependencia de sistema**: PyMuPDF rasteriza
@@ -387,8 +421,7 @@ sin gastar nada y sin poder fallar por un 429.
 
 ---
 
-## 10. Datos personales
-
+## 11. Datos personales
 El sistema trata datos de salud de personas identificadas, que en Colombia son
 datos sensibles bajo la **Ley 1581 de 2012**.
 
@@ -403,8 +436,7 @@ y el consentimiento se informa pero no se registra su aceptación.
 
 ---
 
-## 11. Proceso de trabajo
-
+## 12. Proceso de trabajo
 El proyecto se construyó con asistencia de IA (Claude) en sesiones de trabajo
 donde el ciclo fue siempre el mismo: **hacer una llamada real, leer los logs,
 encontrar el fallo concreto, corregirlo y volver a llamar.** Casi todo lo que
@@ -434,8 +466,7 @@ el piso de seguridad contra el dataset sin gastar una sola llamada de voz.
 
 ---
 
-## 12. Lo que haría con dos semanas más
-
+## 13. Lo que haría con dos semanas más
 **Medir contra pacientes que minimizan.** Es el hueco real: el piso de
 seguridad cubre el 41.7 % de las conversaciones rojas y las que se le escapan
 son casi todas de pacientes que restan importancia a sus síntomas. El dataset
