@@ -1,40 +1,68 @@
 # Arquitectura
 
 ```mermaid
-graph TD
-    B["Navegador — /call<br/>nombre + cirugía + día postop<br/>mic PCM16 16 kHz"]
-    B -->|"WS /ws/call?nombre&procedimiento&dia"| BE
+flowchart TB
+    %% Estilos de Nodos
+    classDef client fill:#1e293b,stroke:#38bdf8,stroke-width:2px,color:#f8fafc
+    classDef backend fill:#0f172a,stroke:#818cf8,stroke-width:2px,color:#f8fafc
+    classDef voice fill:#1e1b4b,stroke:#c084fc,stroke-width:2px,color:#f8fafc
+    classDef llm fill:#064e3b,stroke:#34d399,stroke-width:2px,color:#f8fafc
+    classDef rag fill:#451a03,stroke:#fbbf24,stroke-width:2px,color:#f8fafc
+    classDef alert fill:#7f1d1d,stroke:#f87171,stroke-width:2px,color:#f8fafc
 
-    subgraph backend["Backend FastAPI — app/"]
-        BE["voice/call_routes.py<br/>puente de audio, cola de mic,<br/>failover, resumen"]
-        PAT["patients.py<br/>contexto de la llamada,<br/>memoria de reconexión"]
-        TOOLS["agent/tools.py<br/>consultar_guia_clinica<br/>escalar_paciente"]
-        DEC["agent/decision.py<br/>hard triggers → verde/amarillo/rojo"]
-        MET["metrics.py + tokens.py<br/>latencia P50/P95, tokens estimados"]
-        CALLS["calls.py<br/>resumen persistente por llamada"]
+    subgraph CLIENTES [" 📱 Capa de Cliente / Interfaz "]
+        WEB_CALL["<b>Interfaz de Llamada</b><br/><code>/call</code> (Mic PCM16 16kHz)"]:::client
+        WEB_ADMIN["<b>Consola Clínica Admin</b><br/><code>/admin</code>"]:::client
     end
 
-    BE --> PAT
-    BE -->|"audio + FunctionCallResponse"| DG
-    DG -->|"FunctionCallRequest"| BE
-    BE --> TOOLS
-    TOOLS --> DEC
-    TOOLS --> RAG
-    BE --> MET
-    BE --> CALLS
-
-    DG["Deepgram Voice Agent API<br/>STT + turn-detection + TTS streaming"]
-    DG -->|"think.provider (BYOM)"| PROV
-
-    subgraph PROV["Proveedor de razonamiento — failover automático"]
-        GROQ["Groq · llama-3.3-70b-versatile<br/>límite: 12 000 tokens/min"]
-        GEM["Google · gemini-3.1-flash-lite<br/>límite: peticiones/min"]
+    subgraph BACKEND [" ⚙️ Backend FastAPI (Orquestador & Seguridad) "]
+        WS_BRIDGE["<b>Puente WebSocket & Cola de Audio</b><br/><code>voice/call_routes.py</code>"]:::backend
+        PATIENT_CTX["<b>Contexto & Memoria</b><br/><code>patients.py</code>"]:::backend
+        HARD_SAFETY["<b>Piso de Seguridad (Hard Triggers)</b><br/><code>agent/decision.py</code>"]:::backend
+        GUARDRAILS["<b>Guardrails (Retención 20ms)</b><br/><code>guardrails.py</code>"]:::backend
+        CALL_LOGS["<b>Resumen & Métricas SQLite</b><br/><code>calls.py</code> / <code>metrics.py</code>"]:::backend
     end
 
-    RAG["ChromaDB + embedder local<br/>106 PDFs, filtrados por patología"]
-    ADM["Navegador — /admin"] -->|"POST/DELETE /api/admin/documents"| RAG
-    CALLS -->|"GET /api/calls"| ADM
+    subgraph VOICE_ENGINE [" 🎙️ Servicio de Voz en Tiempo Real "]
+        DEEPGRAM["<b>Deepgram Voice Agent API</b><br/>STT + Detección de Turnos + TTS Streaming"]:::voice
+    end
+
+    subgraph LLM_PROVIDERS [" 🧠 Proveedores de Razonamiento (BYOM Failover) "]
+        GROQ["<b>Groq (Principal)</b><br/><code>llama-3.3-70b-versatile</code>"]:::llm
+        GEMINI["<b>Google Gemini (Respaldo 429)</b><br/><code>gemini-3.1-flash-lite</code>"]:::llm
+    end
+
+    subgraph RAG_KNOWLEDGE [" 📚 Base de Conocimiento Clínico (RAG) "]
+        CHROMADB[("<b>ChromaDB + Embedder Local</b><br/>107 PDFs acotados por Patología")]:::rag
+    end
+
+    subgraph EXTERNAL [" 🚨 Notificaciones de Emergencia "]
+        WEBHOOK["<b>Webhook Saliente</b><br/>Aviso Inmediato al Equipo Médico"]:::alert
+    end
+
+    %% Conexiones Flujo Principal
+    WEB_CALL <-->|"WebSocket WS/PCM16"| WS_BRIDGE
+    WS_BRIDGE <-->|"Streaming Audio & Eventos"| DEEPGRAM
+    DEEPGRAM <-->|"BYOM Protocol"| LLM_PROVIDERS
+    
+    %% Conexiones Internas Backend
+    WS_BRIDGE --> PATIENT_CTX
+    WS_BRIDGE --> HARD_SAFETY
+    WS_BRIDGE --> GUARDRAILS
+    WS_BRIDGE --> CALL_LOGS
+
+    %% RAG & Tools
+    WS_BRIDGE <-->|"Consulta RAG acotada"| CHROMADB
+    WEB_ADMIN <-->|"Gestión de Documentos / Consultas"| CHROMADB
+    CALL_LOGS -->|"Historial & Resúmenes"| WEB_ADMIN
+
+    %% Alertas
+    HARD_SAFETY -->|"Escalamiento Rojo / Amarillo"| WEBHOOK
+
+    %% Distribución de Proveedores
+    GROQ -.->|"Failover si 429"| GEMINI
 ```
+
 
 ## Decisión de modelo (G3)
 
